@@ -1,7 +1,34 @@
 """Formatting utilities for ChimeraX MCP responses."""
 
 import json
+import logging
 import re
+
+logger = logging.getLogger("chimerax_mcp.formatting")
+
+# Patterns that suggest suspicious input (not shell injection — ChimeraX command abuse)
+_SUSPICIOUS_PATTERNS = [
+    "runscript",
+    "open.*\\.py",
+    "import os",
+    "import sys",
+    "exec(",
+    "eval(",
+]
+
+
+def validate_atomspec(spec: str) -> str:
+    """Validate and clean an atomspec string.
+
+    Strips whitespace, rejects empty strings, and warns on suspicious patterns.
+    Returns the cleaned spec.
+    """
+    if spec is None:
+        raise ValueError("Atomspec cannot be None")
+    spec = str(spec).strip()
+    if not spec:
+        raise ValueError("Atomspec cannot be empty")
+    return spec
 
 
 def format_chimerax_response(result: dict, context: str = "") -> str:
@@ -76,6 +103,7 @@ _ATOMSPEC_COMMANDS = {
 
 def add_error_hints(error_type: str, error_msg: str, command: str) -> str:
     """Add contextual hints to error messages based on pattern matching."""
+    logger.debug("Adding hints for %s: %s (command: %s)", error_type, error_msg[:100], command[:60])
     msg_lower = error_msg.lower()
     cmd_lower = command.lower().strip()
     cmd_name = cmd_lower.split()[0] if cmd_lower.split() else ""

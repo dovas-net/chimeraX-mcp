@@ -4,6 +4,7 @@ Handles auto-discovery of running ChimeraX instances, optional auto-launch
 as a background daemon, and the core run_chimerax_command() function.
 """
 
+import logging
 import os
 import sys
 import asyncio
@@ -17,14 +18,22 @@ import aiohttp
 from chimerax_mcp.docs import _find_chimerax_installation_directory
 from chimerax_mcp.formatting import add_error_hints
 
+logger = logging.getLogger("chimerax_mcp.rest")
+
 
 # ---------------------------------------------------------------------------
 # Module-level state
 # ---------------------------------------------------------------------------
 
 CHIMERAX_HOST = 'localhost'
-DEFAULT_CHIMERAX_PORT = 8080
-DEBUG = False
+DEFAULT_CHIMERAX_PORT = int(os.environ.get("CHIMERAX_PORT", "8080"))
+DEFAULT_TIMEOUT = int(os.environ.get("CHIMERAX_TIMEOUT", "60"))
+CHIMERAX_PATH_OVERRIDE = os.environ.get("CHIMERAX_PATH")
+DEBUG = os.environ.get("CHIMERAX_DEBUG", "").lower() in ("1", "true", "yes")
+
+if DEBUG:
+    logging.basicConfig(level=logging.DEBUG)
+    logger.setLevel(logging.DEBUG)
 
 _instances: dict = {}          # port -> instance info
 _default_port: int = DEFAULT_CHIMERAX_PORT
@@ -37,8 +46,15 @@ _session: Optional[aiohttp.ClientSession] = None
 
 def find_chimerax_executable() -> Optional[str]:
     """Return the path to the ChimeraX executable, or None if not found."""
+    if CHIMERAX_PATH_OVERRIDE:
+        if os.path.exists(CHIMERAX_PATH_OVERRIDE):
+            logger.debug("Using CHIMERAX_PATH override: %s", CHIMERAX_PATH_OVERRIDE)
+            return CHIMERAX_PATH_OVERRIDE
+        logger.warning("CHIMERAX_PATH=%s does not exist", CHIMERAX_PATH_OVERRIDE)
+
     install_dir = _find_chimerax_installation_directory()
     if install_dir is None:
+        logger.debug("No ChimeraX installation directory found")
         return None
 
     if sys.platform == 'darwin':
@@ -49,7 +65,9 @@ def find_chimerax_executable() -> Optional[str]:
         exe = os.path.join(install_dir, 'bin', 'ChimeraX')
 
     if os.path.exists(exe):
+        logger.debug("Found ChimeraX executable: %s", exe)
         return exe
+    logger.debug("ChimeraX executable not found at %s", exe)
     return None
 
 
@@ -89,8 +107,22 @@ def get_chimerax_url(port: Optional[int] = None) -> str:
 async def get_session() -> aiohttp.ClientSession:
     """Return the shared aiohttp ClientSession, creating it if necessary."""
     global _session
-    if _session is None or _session.closed:
-        _session = aiohttp.ClientSession()
+    if _session is not None and not _session.closed:
+        # Verify the session belongs to the current event loop
+        try:
+            current_loop = asyncio.get_running_loop()
+            connector = _session.connector
+            if connector is not None and hasattr(connector, '_loop') and connector._loop is not current_loop:
+                # Stale session from a different event loop — discard without closing
+                # (closing would fail on the wrong loop)
+                _session = None
+            else:
+                return _session
+        except RuntimeError:
+            _session = None
+    elif _session is not None and _session.closed:
+        _session = None
+    _session = aiohttp.ClientSession()
     return _session
 
 
@@ -105,9 +137,9 @@ async def is_chimerax_running(port: Optional[int] = None) -> bool:
     url = f"http://{CHIMERAX_HOST}:{port}/cmdline.html"
     try:
         timeout = aiohttp.ClientTimeout(total=1)
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=timeout) as resp:
-                return resp.status == 200
+        session = await get_session()
+        async with session.get(url, timeout=timeout) as resp:
+            return resp.status == 200
     except Exception:
         return False
 
@@ -247,19 +279,21 @@ async def start_chimerax(
     }
 
     # Wait up to 30 seconds
+    logger.info("Waiting for ChimeraX to start on port %d...", actual_port)
     start_time = time.time()
     last_progress = start_time
     while time.time() - start_time < 30:
         if await is_chimerax_running(actual_port):
+            logger.info("ChimeraX ready on port %d (%.1fs)", actual_port, time.time() - start_time)
             return True, actual_port
         now = time.time()
         if now - last_progress >= 5:
             elapsed = int(now - start_time)
-            if DEBUG:
-                print(f"Waiting for ChimeraX on port {actual_port}... ({elapsed}s)")
+            logger.debug("Still waiting for ChimeraX on port %d... (%ds)", actual_port, elapsed)
             last_progress = now
         await asyncio.sleep(0.5)
 
+    logger.error("ChimeraX failed to start on port %d within 30s", actual_port)
     return False, actual_port
 
 
@@ -337,21 +371,38 @@ async def _execute_command_request(
 # 12. run_chimerax_command
 # ---------------------------------------------------------------------------
 
-async def run_chimerax_command(command: str, port: Optional[int] = None) -> dict:
+async def run_chimerax_command(
+    command: str,
+    port: Optional[int] = None,
+    timeout: Optional[int] = None,
+) -> dict:
     """Run a ChimeraX command via REST, auto-launching if needed.
+
+    Args:
+        command: ChimeraX command string.
+        port: REST server port (auto-discovers if None).
+        timeout: Command timeout in seconds (uses DEFAULT_TIMEOUT if None).
 
     Returns a dict with keys: return_values, json_values, logs.
     """
     if port is None:
         port = await find_best_chimerax_instance()
 
+    if timeout is None:
+        timeout = DEFAULT_TIMEOUT
+
     url = f"{get_chimerax_url(port)}/run"
     session = await get_session()
+    aio_timeout = aiohttp.ClientTimeout(total=timeout)
+
+    logger.debug("Running command on port %d: %s (timeout=%ds)", port, command, timeout)
 
     try:
-        return await _execute_command_request(session, url, command)
+        result = await _execute_command_request(session, url, command, aio_timeout)
+        logger.debug("Command completed: %s", command[:80])
+        return result
     except aiohttp.ClientConnectorError:
-        # ChimeraX is not running; try to start it
+        logger.info("Cannot connect to port %d, attempting auto-launch", port)
         chimerax_path = find_chimerax_executable()
         if chimerax_path is None:
             raise Exception(
@@ -364,8 +415,9 @@ async def run_chimerax_command(command: str, port: Optional[int] = None) -> dict
                 f"Cannot connect to ChimeraX on port {port} and failed to start "
                 "a new instance automatically."
             )
+        logger.info("Auto-launched ChimeraX on port %d", actual_port)
         url = f"{get_chimerax_url(actual_port)}/run"
-        return await _execute_command_request(session, url, command)
+        return await _execute_command_request(session, url, command, aio_timeout)
 
 
 # ---------------------------------------------------------------------------

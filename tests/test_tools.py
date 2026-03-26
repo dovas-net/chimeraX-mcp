@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from unittest.mock import patch, AsyncMock
 
@@ -8,6 +10,511 @@ def make_result(logs=None, json_values=None, return_values=None):
         "json_values": json_values or [],
         "return_values": return_values or [],
     }
+
+
+# ===================================================================
+# Previously untested tools
+# ===================================================================
+
+
+class TestRunCommand:
+    @pytest.mark.asyncio
+    async def test_executes_arbitrary_command(self):
+        from chimerax_mcp.server import run_command
+        mock_result = make_result(logs={"info": ["Opened 1abc"]})
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result):
+            result = await run_command("open 1abc")
+            assert "1abc" in result
+
+
+class TestListModels:
+    @pytest.mark.asyncio
+    async def test_returns_model_list(self):
+        from chimerax_mcp.server import list_models
+        info_data = json.dumps([
+            {"spec": "#1", "class": "AtomicStructure", "attribute": "name", "present": True, "value": "1abc"},
+            {"spec": "#2", "class": "Volume", "attribute": "name", "present": True, "value": "emd_1234"},
+        ])
+        display_data = json.dumps([
+            {"spec": "#1", "attribute": "display", "present": True, "value": True},
+            {"spec": "#2", "attribute": "display", "present": True, "value": False},
+        ])
+        atoms_data = json.dumps([
+            {"spec": "#1", "attribute": "num_atoms", "present": True, "value": 5000},
+        ])
+        results = [
+            make_result(json_values=[info_data]),
+            make_result(json_values=[display_data]),
+            make_result(json_values=[atoms_data]),
+        ]
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, side_effect=results):
+            result = await list_models()
+            assert "1abc" in result
+            assert "emd_1234" in result
+            assert "5000" in result
+
+    @pytest.mark.asyncio
+    async def test_no_models(self):
+        from chimerax_mcp.server import list_models
+        mock_result = make_result(json_values=[json.dumps([])])
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result):
+            result = await list_models()
+            assert "No models" in result
+
+
+class TestGetModelInfo:
+    @pytest.mark.asyncio
+    async def test_returns_model_details(self):
+        from chimerax_mcp.server import get_model_info
+        info_data = json.dumps([{"spec": "#1", "class": "AtomicStructure", "value": "1abc"}])
+        atoms_data = json.dumps([{"spec": "#1", "value": 5000}])
+        residues_data = json.dumps([{"spec": "#1", "value": 300}])
+        bonds_data = json.dumps([{"spec": "#1", "value": 5100}])
+        display_data = json.dumps([{"spec": "#1", "value": True}])
+        chain_data = json.dumps([{"value": "A", "polymer type": "protein", "sequence": "MVQD", "residues": ["/A:1","/A:2","/A:3","/A:4"]}])
+        results = [
+            make_result(json_values=[info_data]),
+            make_result(json_values=[atoms_data]),
+            make_result(json_values=[residues_data]),
+            make_result(json_values=[bonds_data]),
+            make_result(json_values=[display_data]),
+            make_result(json_values=[chain_data]),
+        ]
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, side_effect=results):
+            result = await get_model_info("1")
+            assert "1abc" in result
+            assert "5000" in result
+            assert "Chain A" in result
+
+
+class TestGetChainInfo:
+    @pytest.mark.asyncio
+    async def test_returns_chain_details(self):
+        from chimerax_mcp.server import get_chain_info
+        chain_data = json.dumps([{"value": "A", "polymer type": "protein", "sequence": "MVQDTGK", "residues": ["/A:1","/A:2","/A:3","/A:4","/A:5","/A:6","/A:7"]}])
+        mock_result = make_result(json_values=[chain_data])
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result):
+            result = await get_chain_info("1", "A")
+            assert "protein" in result
+            assert "7" in result
+
+
+class TestOpenStructure:
+    @pytest.mark.asyncio
+    async def test_opens_pdb(self):
+        from chimerax_mcp.server import open_structure
+        mock_result = make_result(logs={"info": ["Opened 1gcn"]})
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            result = await open_structure("1gcn")
+            mock.assert_called_once()
+            assert "1gcn" in mock.call_args[0][0]
+            assert "1gcn" in result
+
+    @pytest.mark.asyncio
+    async def test_opens_with_emdb(self):
+        from chimerax_mcp.server import open_structure
+        mock_result = make_result(logs={"info": ["Opened with map"]})
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            result = await open_structure("7bv2", fetch_emdb_map=True)
+            assert "fetchEmdbMap" in mock.call_args[0][0]
+            assert "EMDB" in result
+
+
+class TestSaveImage:
+    @pytest.mark.asyncio
+    async def test_auto_generates_filename(self):
+        from chimerax_mcp.server import save_image
+        mock_result = make_result(logs={"info": ["Image saved"]})
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            result = await save_image()
+            cmd = mock.call_args[0][0]
+            assert "/tmp/chimerax_" in cmd
+            assert ".png" in cmd
+
+    @pytest.mark.asyncio
+    async def test_custom_filename(self):
+        from chimerax_mcp.server import save_image
+        mock_result = make_result(logs={"info": ["Image saved"]})
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            result = await save_image("output.png", width=800, height=600)
+            cmd = mock.call_args[0][0]
+            assert "output.png" in cmd
+            assert "800" in cmd
+
+
+class TestColorModels:
+    @pytest.mark.asyncio
+    async def test_colors_target(self):
+        from chimerax_mcp.server import color_models
+        mock_result = make_result(logs={"info": ["Colored 5000 atoms"]})
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            result = await color_models("red", "#1/A")
+            assert "color #1/A red" == mock.call_args[0][0]
+
+
+class TestShowHideObjects:
+    @pytest.mark.asyncio
+    async def test_show_atoms(self):
+        from chimerax_mcp.server import show_hide_objects
+        select_result = make_result(logs={"note": ["Selected items:", "123 atoms, 120 bonds selected"]})
+        show_result = make_result()
+        model_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, side_effect=[select_result, show_result, model_result]):
+            result = await show_hide_objects("show", "#1", "ab")
+            assert "123 atoms" in result
+
+    @pytest.mark.asyncio
+    async def test_invalid_action(self):
+        from chimerax_mcp.server import show_hide_objects
+        with pytest.raises(ValueError, match="show.*hide"):
+            await show_hide_objects("toggle", "#1", "a")
+
+    @pytest.mark.asyncio
+    async def test_nothing_selected(self):
+        from chimerax_mcp.server import show_hide_objects
+        select_result = make_result(logs={"note": ["Nothing selected"]})
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=select_result):
+            with pytest.raises(ValueError, match="No objects"):
+                await show_hide_objects("show", "#99", "a")
+
+
+class TestViewResidue:
+    @pytest.mark.asyncio
+    async def test_centers_on_residue(self):
+        from chimerax_mcp.server import view_residue
+        calls = []
+        async def mock_run(cmd, port=None, timeout=None):
+            calls.append(cmd)
+            return make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", side_effect=mock_run):
+            result = await view_residue("1", "A", "100")
+            assert any("view #1/A:100" in c for c in calls)
+            assert any("cofr #1/A:100" in c for c in calls)
+
+
+class TestListChimeraXInstances:
+    @pytest.mark.asyncio
+    async def test_lists_instances(self):
+        from chimerax_mcp.server import list_chimerax_instances
+        instances = {8080: {"session_name": "main"}, 8081: {"session_name": "alt", "auto_discovered": True}}
+        with patch("chimerax_mcp.server.list_running_instances", new_callable=AsyncMock, return_value=instances):
+            result = await list_chimerax_instances()
+            assert "8080" in result
+            assert "main" in result
+
+    @pytest.mark.asyncio
+    async def test_no_instances(self):
+        from chimerax_mcp.server import list_chimerax_instances
+        with patch("chimerax_mcp.server.list_running_instances", new_callable=AsyncMock, return_value={}):
+            result = await list_chimerax_instances()
+            assert "No running" in result
+
+
+class TestStartNewSession:
+    @pytest.mark.asyncio
+    async def test_starts_successfully(self):
+        from chimerax_mcp.server import start_new_chimerax_session
+        with patch("chimerax_mcp.server.find_chimerax_executable", return_value="/usr/bin/chimerax"):
+            with patch("chimerax_mcp.server.start_chimerax", new_callable=AsyncMock, return_value=(True, 8081)):
+                result = await start_new_chimerax_session("test_session", 8081)
+                assert "8081" in result
+                assert "successfully" in result
+
+    @pytest.mark.asyncio
+    async def test_no_executable(self):
+        from chimerax_mcp.server import start_new_chimerax_session
+        with patch("chimerax_mcp.server.find_chimerax_executable", return_value=None):
+            result = await start_new_chimerax_session()
+            assert "not found" in result
+
+
+class TestCheckStatus:
+    @pytest.mark.asyncio
+    async def test_running(self):
+        from chimerax_mcp.server import check_chimerax_status
+        with patch("chimerax_mcp.server.is_chimerax_running", new_callable=AsyncMock, return_value=True):
+            result = await check_chimerax_status(8080)
+            assert "running" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_not_running(self):
+        from chimerax_mcp.server import check_chimerax_status
+        with patch("chimerax_mcp.server.is_chimerax_running", new_callable=AsyncMock, return_value=False):
+            result = await check_chimerax_status(9999)
+            assert "NOT running" in result
+
+
+class TestSetDefaultSession:
+    @pytest.mark.asyncio
+    async def test_sets_default(self):
+        from chimerax_mcp.server import set_default_session
+        import chimerax_mcp.chimera_rest as rest_mod
+        old_port = rest_mod._default_port
+        with patch("chimerax_mcp.server.is_chimerax_running", new_callable=AsyncMock, return_value=True):
+            result = await set_default_session(8081)
+            assert "8081" in result
+        rest_mod._default_port = old_port  # restore
+
+    @pytest.mark.asyncio
+    async def test_rejects_nonrunning(self):
+        from chimerax_mcp.server import set_default_session
+        with patch("chimerax_mcp.server.is_chimerax_running", new_callable=AsyncMock, return_value=False):
+            result = await set_default_session(9999)
+            assert "No ChimeraX" in result
+
+
+class TestListCommands:
+    @pytest.mark.asyncio
+    async def test_lists_commands(self):
+        from chimerax_mcp.server import list_chimerax_commands
+        with patch("chimerax_mcp.server.list_available_commands", return_value=["open", "close", "color"]):
+            result = await list_chimerax_commands()
+            assert "open" in result
+            assert "3" in result  # count
+
+    @pytest.mark.asyncio
+    async def test_no_docs(self):
+        from chimerax_mcp.server import list_chimerax_commands
+        with patch("chimerax_mcp.server.list_available_commands", return_value=[]):
+            result = await list_chimerax_commands()
+            assert "not found" in result.lower() or "Could not" in result
+
+
+class TestGetCommandDocumentation:
+    @pytest.mark.asyncio
+    async def test_returns_doc(self):
+        from chimerax_mcp.server import get_command_documentation
+        with patch("chimerax_mcp.server.get_command_doc", return_value="# ChimeraX Command: open\n\nOpen files"):
+            result = await get_command_documentation("open")
+            assert "open" in result.lower()
+
+
+# ===================================================================
+# New tools (Phase 4)
+# ===================================================================
+
+
+class TestSelectAtoms:
+    @pytest.mark.asyncio
+    async def test_set_selection(self):
+        from chimerax_mcp.server import select_atoms
+        mock_result = make_result(logs={"note": ["123 atoms selected"]})
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            result = await select_atoms("#1/A")
+            assert "select #1/A" == mock.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_add_selection(self):
+        from chimerax_mcp.server import select_atoms
+        mock_result = make_result(logs={"note": ["Added to selection"]})
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await select_atoms("#1/B", mode="add")
+            assert "select add #1/B" == mock.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_clear_selection(self):
+        from chimerax_mcp.server import select_atoms
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            result = await select_atoms("", mode="clear")
+            assert "~select" == mock.call_args[0][0]
+            assert "cleared" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_invalid_mode(self):
+        from chimerax_mcp.server import select_atoms
+        with pytest.raises(ValueError, match="Mode"):
+            await select_atoms("#1", mode="toggle")
+
+
+class TestSelectZone:
+    @pytest.mark.asyncio
+    async def test_selects_zone(self):
+        from chimerax_mcp.server import select_zone
+        mock_result = make_result(logs={"note": ["50 residues selected"]})
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            result = await select_zone("#1:ATP", 5.0)
+            assert "zone" in mock.call_args[0][0]
+            assert "5.0" in mock.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_invalid_target_type(self):
+        from chimerax_mcp.server import select_zone
+        with pytest.raises(ValueError, match="target_type"):
+            await select_zone("#1", 5.0, target_type="chains")
+
+
+class TestLabelAtoms:
+    @pytest.mark.asyncio
+    async def test_adds_label(self):
+        from chimerax_mcp.server import label_atoms
+        mock_result = make_result(logs={"info": ["Labeled 1 residue"]})
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            result = await label_atoms("#1/A:100", text="Active Site")
+            cmd = mock.call_args[0][0]
+            assert 'text "Active Site"' in cmd
+
+    @pytest.mark.asyncio
+    async def test_deletes_labels(self):
+        from chimerax_mcp.server import label_atoms
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            result = await label_atoms("#1", delete=True)
+            assert "label delete" in mock.call_args[0][0]
+            assert "Removed" in result
+
+
+class TestLabel2D:
+    @pytest.mark.asyncio
+    async def test_adds_2d_label(self):
+        from chimerax_mcp.server import label_2d
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            result = await label_2d("My Title", x=0.5, y=0.9, size=32)
+            cmd = mock.call_args[0][0]
+            assert '2dlabels' in cmd
+            assert '"My Title"' in cmd
+            assert "32" in cmd
+
+
+class TestSaveSession:
+    @pytest.mark.asyncio
+    async def test_saves_with_extension(self):
+        from chimerax_mcp.server import save_session
+        mock_result = make_result(logs={"info": ["Session saved"]})
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            result = await save_session("my_session")
+            assert "my_session.cxs" in mock.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_preserves_extension(self):
+        from chimerax_mcp.server import save_session
+        mock_result = make_result(logs={"info": ["Session saved"]})
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await save_session("my_session.cxs")
+            assert mock.call_args[0][0].count(".cxs") == 1
+
+
+class TestOpenSession:
+    @pytest.mark.asyncio
+    async def test_opens_session(self):
+        from chimerax_mcp.server import open_session
+        mock_result = make_result(logs={"info": ["Session restored"]})
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            result = await open_session("my_session.cxs")
+            assert "open my_session.cxs" == mock.call_args[0][0]
+
+
+class TestCreateSurface:
+    @pytest.mark.asyncio
+    async def test_creates_solid_surface(self):
+        from chimerax_mcp.server import create_surface
+        mock_result = make_result(logs={"info": ["Created surface"]})
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            result = await create_surface("#1")
+            assert mock.call_count == 1  # solid = no style command
+
+    @pytest.mark.asyncio
+    async def test_creates_mesh_surface(self):
+        from chimerax_mcp.server import create_surface
+        mock_result = make_result(logs={"info": ["Created surface"]})
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await create_surface("#1", style="mesh")
+            assert mock.call_count == 2  # surface + style
+
+    @pytest.mark.asyncio
+    async def test_invalid_style(self):
+        from chimerax_mcp.server import create_surface
+        with pytest.raises(ValueError, match="Style"):
+            await create_surface("#1", style="wireframe")
+
+
+class TestColorSurface:
+    @pytest.mark.asyncio
+    async def test_coulombic(self):
+        from chimerax_mcp.server import color_surface
+        mock_result = make_result(logs={"info": ["Colored by electrostatics"]})
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            result = await color_surface("#1", method="coulombic")
+            assert "coulombic #1" == mock.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_invalid_method(self):
+        from chimerax_mcp.server import color_surface
+        with pytest.raises(ValueError, match="Method"):
+            await color_surface("#1", method="rainbow")
+
+
+class TestSetTransparency:
+    @pytest.mark.asyncio
+    async def test_sets_transparency(self):
+        from chimerax_mcp.server import set_transparency
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            result = await set_transparency("#1", 50, "s")
+            assert "transparency #1 50 target s" == mock.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_rejects_invalid_percent(self):
+        from chimerax_mcp.server import set_transparency
+        with pytest.raises(ValueError, match="0-100"):
+            await set_transparency("#1", 150)
+
+
+class TestUndoRedo:
+    @pytest.mark.asyncio
+    async def test_undo(self):
+        from chimerax_mcp.server import undo_redo
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            result = await undo_redo("undo")
+            assert mock.call_args[0][0] == "undo"
+            assert "Undo" in result
+
+    @pytest.mark.asyncio
+    async def test_redo_multiple(self):
+        from chimerax_mcp.server import undo_redo
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            result = await undo_redo("redo", count=3)
+            assert "redo 3" == mock.call_args[0][0]
+            assert "3 steps" in result
+
+    @pytest.mark.asyncio
+    async def test_invalid_action(self):
+        from chimerax_mcp.server import undo_redo
+        with pytest.raises(ValueError, match="undo.*redo"):
+            await undo_redo("reset")
+
+
+# ===================================================================
+# Infrastructure tests
+# ===================================================================
+
+
+class TestValidateAtomspec:
+    def test_strips_whitespace(self):
+        from chimerax_mcp.formatting import validate_atomspec
+        assert validate_atomspec("  #1/A  ") == "#1/A"
+
+    def test_rejects_empty(self):
+        from chimerax_mcp.formatting import validate_atomspec
+        with pytest.raises(ValueError, match="empty"):
+            validate_atomspec("")
+
+    def test_rejects_none(self):
+        from chimerax_mcp.formatting import validate_atomspec
+        with pytest.raises(ValueError, match="None"):
+            validate_atomspec(None)
+
+    def test_passes_valid(self):
+        from chimerax_mcp.formatting import validate_atomspec
+        assert validate_atomspec("#1/A:100@CA") == "#1/A:100@CA"
+
+
+# ===================================================================
+# Existing tool tests below
+# ===================================================================
 
 
 class TestMeasureDistance:

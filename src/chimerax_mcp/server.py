@@ -3,6 +3,7 @@
 import asyncio
 import atexit
 import json
+import logging
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -17,12 +18,18 @@ from chimerax_mcp.chimera_rest import (
     parse_info_json,
 )
 import chimerax_mcp.chimera_rest as rest
-from chimerax_mcp.formatting import format_chimerax_response, format_single_model_info
+from chimerax_mcp.formatting import (
+    format_chimerax_response,
+    format_single_model_info,
+    validate_atomspec,
+)
 from chimerax_mcp.docs import (
     get_atomspec_guide as _get_atomspec_guide,
     list_available_commands,
     get_command_doc,
 )
+
+logger = logging.getLogger("chimerax_mcp.tools")
 
 mcp = FastMCP("ChimeraX Bridge")
 
@@ -31,8 +38,20 @@ mcp = FastMCP("ChimeraX Bridge")
 # Entry point
 # ---------------------------------------------------------------------------
 
+def _sync_cleanup():
+    """Synchronously close the shared aiohttp session at exit."""
+    try:
+        asyncio.run(cleanup())
+    except RuntimeError:
+        # Event loop may still be running during shutdown; close connector directly
+        import chimerax_mcp.chimera_rest as _rest
+        if _rest._session is not None and not _rest._session.closed:
+            if _rest._session.connector is not None:
+                _rest._session.connector.close()
+
+
 def main():
-    atexit.register(lambda: asyncio.run(cleanup()))
+    atexit.register(_sync_cleanup)
     mcp.run()
 
 
@@ -383,6 +402,7 @@ async def color_models(
                 Use get_atomspec_guide() for syntax.
         session_id: ChimeraX session port (defaults to primary session)
     """
+    target = validate_atomspec(target)
     command = f"color {target} {color}"
     result = await run_chimerax_command(command, session_id)
     context = f"Colored {target} with {color}"
@@ -390,46 +410,33 @@ async def color_models(
 
 
 # ---------------------------------------------------------------------------
-# Tool 8: superpose_residue
+# Tool 8: view_residue
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-async def superpose_residue(
-    source_model: str,
-    source_chain: str,
-    source_residue: str,
-    target_model: str,
-    target_chain: str,
-    target_residue: str,
+async def view_residue(
+    model: str,
+    chain: str,
+    residue: str,
     session_id: Optional[int] = None,
 ) -> str:
-    """Superpose view on a specific residue by aligning source to target position.
-
-    This performs a two-step operation:
-    1. Centers the view on the target residue
-    2. Moves the center of rotation to that position
+    """Center the view on a specific residue and set it as the center of rotation.
 
     Args:
-        source_model: Source model ID (e.g., '1')
-        source_chain: Source chain ID (e.g., 'A')
-        source_residue: Source residue number (e.g., '100')
-        target_model: Target model ID (e.g., '2')
-        target_chain: Target chain ID (e.g., 'A')
-        target_residue: Target residue number (e.g., '100')
+        model: Model ID (e.g., '1')
+        chain: Chain ID (e.g., 'A')
+        residue: Residue number (e.g., '100')
         session_id: ChimeraX session port (defaults to primary session)
     """
-    source_spec = f"#{source_model}/{source_chain}:{source_residue}"
-    target_spec = f"#{target_model}/{target_chain}:{target_residue}"
+    spec = f"#{model}/{chain}:{residue}"
 
-    # Step 1: Center view on target residue
-    view_command = f"view {target_spec}"
-    await run_chimerax_command(view_command, session_id)
+    # Center view on residue
+    await run_chimerax_command(f"view {spec}", session_id)
 
-    # Step 2: Move center of rotation
-    cofr_command = f"cofr {target_spec}"
-    result = await run_chimerax_command(cofr_command, session_id)
+    # Set center of rotation
+    result = await run_chimerax_command(f"cofr {spec}", session_id)
 
-    context = f"Superposed view: {source_spec} aligned to {target_spec}"
+    context = f"View centered on {spec}"
     return format_chimerax_response(result, context)
 
 
@@ -706,14 +713,22 @@ async def show_hide_objects(
     """
     if action not in ["show", "hide"]:
         raise ValueError("Action must be 'show' or 'hide'")
+    atomspec = validate_atomspec(atomspec)
     if any(letter not in "abcpsm" for letter in target):
         raise ValueError("Target must be one or more of 'a', 'b', 'p', 'c', 's', 'm'")
 
     # Select first for feedback on affected count
+    import re as _re
     select_result = await run_chimerax_command(f"select {atomspec}", session_id)
     note_logs = select_result.get("logs", {}).get("note", [])
-    counts_string = note_logs[1] if len(note_logs) > 1 else "unknown count"
-    counts_string = counts_string.replace(" selected", "")
+    counts_string = "unknown count"
+    for note in note_logs:
+        if note and _re.search(r"\d+\s+(atom|bond|residue|model|pseudobond)", note):
+            counts_string = note.replace(" selected", "")
+            break
+        elif note and "Nothing" in note:
+            counts_string = "Nothing"
+            break
 
     if counts_string == "Nothing":
         raise ValueError(f"No objects found matching atomspec: {atomspec}")
@@ -751,6 +766,7 @@ async def measure_distance(atom1: str, atom2: str, session_id: Optional[int] = N
         atom2: Atomspec for second point (e.g., '#1/A:200@CA')
         session_id: ChimeraX session port (defaults to primary session)
     """
+    atom1, atom2 = validate_atomspec(atom1), validate_atomspec(atom2)
     command = f"distance {atom1} {atom2}"
     result = await run_chimerax_command(command, session_id)
     context = f"Distance measurement: {atom1} to {atom2}"
@@ -792,6 +808,7 @@ async def find_clashes(target: str, restrict: str = "both", overlap_cutoff: floa
         overlap_cutoff: Minimum overlap in Angstroms for a clash (default: 0.6)
         session_id: ChimeraX session port (defaults to primary session)
     """
+    target = validate_atomspec(target)
     command = f"clashes {target} restrict {restrict} overlapCutoff {overlap_cutoff}"
     result = await run_chimerax_command(command, session_id)
     context = f"Clash analysis for {target} (restrict={restrict}, cutoff={overlap_cutoff})"
@@ -840,7 +857,7 @@ async def predict_structure(sequence: str, method: str = "alphafold", session_id
         raise ValueError(f"Invalid amino acid sequence. Use only standard amino acid letters: {''.join(sorted(valid_aa))}")
 
     command = f"{method} predict {seq_upper}"
-    result = await run_chimerax_command(command, session_id)
+    result = await run_chimerax_command(command, session_id, timeout=300)
     context = f"Structure prediction ({method}) for sequence ({len(seq_upper)} residues)"
     return format_chimerax_response(result, context)
 
@@ -881,12 +898,15 @@ async def set_scene(
     if not commands:
         return "No scene properties specified. Provide at least one of: background, lighting, silhouettes, camera."
 
-    results = []
+    all_logs: dict = {}
     for cmd in commands:
-        await run_chimerax_command(cmd, session_id)
-        results.append(cmd)
+        result = await run_chimerax_command(cmd, session_id)
+        for level, messages in result.get("logs", {}).items():
+            all_logs.setdefault(level, []).extend(messages)
 
-    return f"Scene updated:\n" + "\n".join(f"  - {cmd}" for cmd in results)
+    summary = "Scene updated:\n" + "\n".join(f"  - {cmd}" for cmd in commands)
+    combined_result = {"return_values": [], "json_values": [], "logs": all_logs}
+    return format_chimerax_response(combined_result, summary)
 
 
 # ---------------------------------------------------------------------------
@@ -931,44 +951,12 @@ async def get_session_info(session_id: Optional[int] = None) -> str:
     else:
         output.append("Using auto-discovered session")
 
-    # Model list
+    # Model list (reuse list_models for complete info including atom counts)
     try:
-        info_result = await run_chimerax_command("info models", session_id)
-        model_rows = parse_info_json(info_result)
-        if model_rows:
-            output.append(f"\nModels ({len(model_rows)} loaded):")
-            for row in model_rows:
-                model = {
-                    "spec": row.get("spec", "?"),
-                    "name": row.get("value", row.get("name", "unknown")),
-                    "class": row.get("class", ""),
-                }
-                lines = format_single_model_info(model)
-                for line in lines:
-                    output.append(f"  {line}")
-        else:
-            output.append("\nNo models loaded.")
+        models_text = await list_models(session_id)
+        output.append(f"\n{models_text}")
     except Exception as e:
         output.append(f"\nCould not retrieve model info: {e}")
-
-    # Visibility state
-    try:
-        display_result = await run_chimerax_command(
-            "info models attribute display", session_id
-        )
-        display_rows = parse_info_json(display_result)
-        if display_rows:
-            visible_count = sum(
-                1 for r in display_rows if r.get("value", False)
-            )
-            output.append(
-                f"\nVisibility: {visible_count}/{len(display_rows)} "
-                f"model(s) displayed"
-            )
-        else:
-            output.append("\nNo visibility data available.")
-    except Exception as e:
-        output.append(f"\nCould not retrieve visibility info: {e}")
 
     return "\n".join(output)
 
@@ -987,6 +975,7 @@ async def measure_angle(atom1: str, atom2: str, atom3: str, session_id: Optional
         atom3: Atomspec for third atom
         session_id: ChimeraX session port (defaults to primary session)
     """
+    atom1, atom2, atom3 = validate_atomspec(atom1), validate_atomspec(atom2), validate_atomspec(atom3)
     command = f"angle {atom1} {atom2} {atom3}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Angle: {atom1} - {atom2} - {atom3}")
@@ -1007,6 +996,7 @@ async def measure_torsion(atom1: str, atom2: str, atom3: str, atom4: str, sessio
         atom4: Atomspec for fourth atom
         session_id: ChimeraX session port (defaults to primary session)
     """
+    atom1, atom2, atom3, atom4 = (validate_atomspec(a) for a in [atom1, atom2, atom3, atom4])
     command = f"torsion {atom1} {atom2} {atom3} {atom4}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Torsion: {atom1} - {atom2} - {atom3} - {atom4}")
@@ -1059,6 +1049,7 @@ async def measure_buried_area(target1: str, target2: str, session_id: Optional[i
         target2: Atomspec for second group of atoms
         session_id: ChimeraX session port (defaults to primary session)
     """
+    target1, target2 = validate_atomspec(target1), validate_atomspec(target2)
     command = f"measure buriedArea {target1} withAtoms2 {target2}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Buried area between {target1} and {target2}")
@@ -1111,8 +1102,9 @@ async def blast_search(query: str, database: str = "pdb", session_id: Optional[i
         session_id: ChimeraX session port (defaults to primary session)
     """
     command = f"blastprotein {query} database {database}"
-    result = await run_chimerax_command(command, session_id)
-    return format_chimerax_response(result, f"BLAST search ({database}): {query[:50]}...")
+    result = await run_chimerax_command(command, session_id, timeout=120)
+    query_display = f"{query[:50]}..." if len(query) > 50 else query
+    return format_chimerax_response(result, f"BLAST search ({database}): {query_display}")
 
 
 # ---------------------------------------------------------------------------
@@ -1128,6 +1120,7 @@ async def swap_residue(atomspec: str, new_residue: str, session_id: Optional[int
         new_residue: Three-letter code for the new residue (e.g., 'ALA', 'GLY', 'PHE')
         session_id: ChimeraX session port (defaults to primary session)
     """
+    atomspec = validate_atomspec(atomspec)
     command = f"swapaa {atomspec} {new_residue}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Swapped {atomspec} to {new_residue}")
@@ -1164,7 +1157,7 @@ async def minimize_structure(target: str = "all", steps: int = 100, session_id: 
         session_id: ChimeraX session port (defaults to primary session)
     """
     command = f"minimize {target} steps {steps}"
-    result = await run_chimerax_command(command, session_id)
+    result = await run_chimerax_command(command, session_id, timeout=300)
     return format_chimerax_response(result, f"Minimized {target} ({steps} steps)")
 
 
@@ -1218,3 +1211,300 @@ async def measure_map_stats(map_model: str, session_id: Optional[int] = None) ->
     command = f"measure mapstats {map_model}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Map statistics for {map_model}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 39: select_atoms
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def select_atoms(
+    atomspec: str, mode: str = "set", session_id: Optional[int] = None
+) -> str:
+    """Select atoms, residues, chains, or models in ChimeraX.
+
+    Args:
+        atomspec: What to select (e.g., '#1/A', 'ligand', '#1/A:100-200')
+        mode: Selection mode - 'set' (replace), 'add' (extend), 'subtract' (remove), 'clear' (deselect all)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if mode == "clear":
+        result = await run_chimerax_command("~select", session_id)
+        return format_chimerax_response(result, "Selection cleared")
+
+    atomspec = validate_atomspec(atomspec)
+    if mode == "set":
+        command = f"select {atomspec}"
+    elif mode == "add":
+        command = f"select add {atomspec}"
+    elif mode == "subtract":
+        command = f"select subtract {atomspec}"
+    else:
+        raise ValueError(f"Mode must be 'set', 'add', 'subtract', or 'clear', got '{mode}'")
+
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Selected ({mode}): {atomspec}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 40: select_zone
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def select_zone(
+    origin: str,
+    distance: float,
+    target_type: str = "residues",
+    session_id: Optional[int] = None,
+) -> str:
+    """Select everything within a distance of a target specification.
+
+    Args:
+        origin: Atomspec for the center of the zone (e.g., '#1:ATP', '#1/A:100')
+        distance: Distance in Angstroms for the selection zone
+        target_type: What to select - 'atoms' or 'residues' (default: 'residues')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    origin = validate_atomspec(origin)
+    if target_type not in ("atoms", "residues"):
+        raise ValueError(f"target_type must be 'atoms' or 'residues', got '{target_type}'")
+
+    command = f"select zone {origin} {distance} {target_type} true"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Selected {target_type} within {distance}A of {origin}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 41: label_atoms
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def label_atoms(
+    atomspec: str,
+    text: str = "",
+    attribute: str = "",
+    height: float = 1.0,
+    color: str = "",
+    delete: bool = False,
+    session_id: Optional[int] = None,
+) -> str:
+    """Add or remove text labels on atoms or residues.
+
+    Args:
+        atomspec: What to label (e.g., '#1/A:100', 'ligand')
+        text: Label text (if empty, uses default atom/residue name)
+        attribute: Show an attribute instead of text (e.g., 'residue_name', 'bfactor')
+        height: Label height in Angstroms (default: 1.0)
+        color: Label color (e.g., 'white', 'black')
+        delete: If True, remove labels instead of adding them
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    atomspec = validate_atomspec(atomspec)
+    if delete:
+        command = f"label delete {atomspec}"
+    else:
+        command = f"label {atomspec}"
+        if text:
+            command += f' text "{text}"'
+        if attribute:
+            command += f" attribute {attribute}"
+        command += f" height {height}"
+        if color:
+            command += f" color {color}"
+
+    result = await run_chimerax_command(command, session_id)
+    action = "Removed labels from" if delete else "Labeled"
+    return format_chimerax_response(result, f"{action} {atomspec}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 42: label_2d
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def label_2d(
+    text: str,
+    x: float = 0.5,
+    y: float = 0.95,
+    size: int = 24,
+    color: str = "white",
+    session_id: Optional[int] = None,
+) -> str:
+    """Add a 2D text overlay on the viewport (for titles, annotations).
+
+    Coordinates are fractional: (0,0) is bottom-left, (1,1) is top-right.
+
+    Args:
+        text: Text to display
+        x: Horizontal position (0.0-1.0, default: 0.5 = center)
+        y: Vertical position (0.0-1.0, default: 0.95 = near top)
+        size: Font size in points (default: 24)
+        color: Text color (default: 'white')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f'2dlabels text "{text}" xpos {x} ypos {y} size {size} color {color}'
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Added 2D label: \"{text}\"")
+
+
+# ---------------------------------------------------------------------------
+# Tool 43: save_session
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def save_session(
+    filename: str, session_id: Optional[int] = None
+) -> str:
+    """Save the current ChimeraX session to a file.
+
+    Args:
+        filename: Path to save the session (e.g., '~/my_session.cxs'). Extension .cxs is added if missing.
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if not filename.endswith(".cxs"):
+        filename += ".cxs"
+    command = f"save {filename}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Session saved: {filename}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 44: open_session
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def open_session(
+    filename: str, session_id: Optional[int] = None
+) -> str:
+    """Open a previously saved ChimeraX session file.
+
+    Args:
+        filename: Path to the session file (e.g., '~/my_session.cxs')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"open {filename}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Session opened: {filename}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 45: create_surface
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def create_surface(
+    target: str = "all",
+    style: str = "solid",
+    resolution: float = 0.0,
+    session_id: Optional[int] = None,
+) -> str:
+    """Generate a molecular surface for the specified atoms.
+
+    Args:
+        target: Atomspec for what to create a surface of (default: 'all')
+        style: Surface style - 'solid', 'mesh', or 'dot' (default: 'solid')
+        resolution: Surface resolution in Angstroms (0 = default)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if style not in ("solid", "mesh", "dot"):
+        raise ValueError(f"Style must be 'solid', 'mesh', or 'dot', got '{style}'")
+
+    command = f"surface {target}"
+    if resolution > 0:
+        command += f" resolution {resolution}"
+    result = await run_chimerax_command(command, session_id)
+
+    if style != "solid":
+        await run_chimerax_command(f"surface style {target} {style}", session_id)
+
+    return format_chimerax_response(result, f"Surface created for {target} (style={style})")
+
+
+# ---------------------------------------------------------------------------
+# Tool 46: color_surface
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def color_surface(
+    target: str,
+    method: str = "coulombic",
+    palette: str = "",
+    session_id: Optional[int] = None,
+) -> str:
+    """Color a surface by electrostatic potential, hydrophobicity, or B-factor.
+
+    Args:
+        target: Atomspec for the surface to color (e.g., '#1')
+        method: Coloring method - 'coulombic' (electrostatics), 'mlp' (hydrophobicity), 'bfactor'
+        palette: Custom color palette (e.g., 'red-white-blue'). Uses method default if empty.
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    target = validate_atomspec(target)
+    if method not in ("coulombic", "mlp", "bfactor"):
+        raise ValueError(f"Method must be 'coulombic', 'mlp', or 'bfactor', got '{method}'")
+
+    if method == "bfactor":
+        command = f"color bfactor {target}"
+    else:
+        command = f"{method} {target}"
+
+    if palette:
+        command += f" palette {palette}"
+
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Colored surface of {target} by {method}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 47: set_transparency
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def set_transparency(
+    target: str,
+    percent: int,
+    what: str = "s",
+    session_id: Optional[int] = None,
+) -> str:
+    """Set transparency on surfaces, cartoons, or atoms.
+
+    Args:
+        target: Atomspec for the object (e.g., '#1', '#1/A')
+        percent: Transparency percentage (0 = opaque, 100 = invisible)
+        what: What to make transparent - 's' (surfaces), 'c' (cartoons), 'a' (atoms)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    target = validate_atomspec(target)
+    if not (0 <= percent <= 100):
+        raise ValueError(f"Percent must be 0-100, got {percent}")
+    if any(c not in "sca" for c in what):
+        raise ValueError(f"'what' must be one or more of 's', 'c', 'a', got '{what}'")
+
+    command = f"transparency {target} {percent} target {what}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Set {target} transparency to {percent}%")
+
+
+# ---------------------------------------------------------------------------
+# Tool 48: undo_redo
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def undo_redo(
+    action: str = "undo", count: int = 1, session_id: Optional[int] = None
+) -> str:
+    """Undo or redo recent actions in ChimeraX.
+
+    Args:
+        action: 'undo' or 'redo' (default: 'undo')
+        count: Number of steps to undo/redo (default: 1)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if action not in ("undo", "redo"):
+        raise ValueError(f"Action must be 'undo' or 'redo', got '{action}'")
+    if count < 1:
+        raise ValueError(f"Count must be >= 1, got {count}")
+
+    command = f"{action} {count}" if count > 1 else action
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"{action.capitalize()} ({count} step{'s' if count > 1 else ''})")

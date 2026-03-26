@@ -3,7 +3,6 @@
 import asyncio
 import atexit
 import json
-import sys
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -13,7 +12,6 @@ from chimerax_mcp.chimera_rest import (
     is_chimerax_running,
     start_chimerax,
     find_chimerax_executable,
-    find_available_port,
     list_running_instances,
     cleanup,
 )

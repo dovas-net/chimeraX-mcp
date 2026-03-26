@@ -9,7 +9,6 @@ import sys
 import asyncio
 import socket
 import time
-import platform
 import subprocess
 from typing import Optional
 
@@ -186,8 +185,8 @@ def start_chimerax_daemon(port: int) -> bool:
 # ---------------------------------------------------------------------------
 
 async def start_chimerax(
-    port: int = None,
-    session_name: str = None,
+    port: Optional[int] = None,
+    session_name: Optional[str] = None,
     force_new: bool = False,
 ) -> tuple[bool, int]:
     """Start a ChimeraX instance with REST enabled.

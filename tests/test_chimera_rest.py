@@ -107,3 +107,44 @@ class TestRunChimeraXCommand:
                 with patch("chimerax_mcp.chimera_rest.find_best_chimerax_instance", return_value=8080):
                     with pytest.raises(Exception, match="Unknown command"):
                         await run_chimerax_command("foobar")
+
+
+class TestParseInfoJson:
+    def test_empty_json_values(self):
+        from chimerax_mcp.chimera_rest import parse_info_json
+        result = {"json_values": [], "return_values": [], "logs": {}}
+        assert parse_info_json(result) == []
+
+    def test_missing_json_values(self):
+        from chimerax_mcp.chimera_rest import parse_info_json
+        result = {"return_values": [], "logs": {}}
+        assert parse_info_json(result) == []
+
+    def test_parses_json_string(self):
+        from chimerax_mcp.chimera_rest import parse_info_json
+        import json
+        data = [{"spec": "#1", "class": "AtomicStructure", "attribute": "name", "present": True, "value": "1abc"}]
+        result = {"json_values": [json.dumps(data)], "return_values": [], "logs": {}}
+        parsed = parse_info_json(result)
+        assert len(parsed) == 1
+        assert parsed[0]["spec"] == "#1"
+        assert parsed[0]["value"] == "1abc"
+
+    def test_already_parsed_list(self):
+        from chimerax_mcp.chimera_rest import parse_info_json
+        data = [{"spec": "#1", "value": "test"}]
+        result = {"json_values": [data], "return_values": [], "logs": {}}
+        parsed = parse_info_json(result)
+        assert parsed == data
+
+    def test_single_dict_wrapped(self):
+        from chimerax_mcp.chimera_rest import parse_info_json
+        data = {"spec": "#1", "value": "test"}
+        result = {"json_values": [data], "return_values": [], "logs": {}}
+        parsed = parse_info_json(result)
+        assert parsed == [data]
+
+    def test_none_in_json_values(self):
+        from chimerax_mcp.chimera_rest import parse_info_json
+        result = {"json_values": [None], "return_values": [], "logs": {}}
+        assert parse_info_json(result) == []

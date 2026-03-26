@@ -369,7 +369,50 @@ async def run_chimerax_command(command: str, port: Optional[int] = None) -> dict
 
 
 # ---------------------------------------------------------------------------
-# 13. cleanup
+# 13. parse_info_json
+# ---------------------------------------------------------------------------
+
+def parse_info_json(result: dict) -> list[dict]:
+    """Extract and parse JSON data from a ChimeraX info command response.
+
+    ChimeraX 1.11.1 returns json_values[0] as a JSON-encoded string.
+    This handles both string and already-parsed formats for robustness.
+
+    Returns a list of dicts (one per model/chain/attribute row).
+    """
+    import json as _json
+
+    json_values = result.get("json_values", [])
+    if not json_values:
+        return []
+
+    raw = json_values[0]
+    if raw is None:
+        return []
+
+    # If it's a JSON string, parse it
+    if isinstance(raw, str):
+        try:
+            parsed = _json.loads(raw)
+        except _json.JSONDecodeError:
+            return []
+        if isinstance(parsed, list):
+            return parsed
+        elif isinstance(parsed, dict):
+            return [parsed]
+        return []
+
+    # Already parsed
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, dict):
+        return [raw]
+
+    return []
+
+
+# ---------------------------------------------------------------------------
+# 14. cleanup
 # ---------------------------------------------------------------------------
 
 async def cleanup() -> None:

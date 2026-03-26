@@ -178,75 +178,33 @@ def add_error_hints(error_type: str, error_msg: str, command: str) -> str:
 
 
 def format_single_model_info(model: dict) -> list[str]:
-    """Format a single model dict into a list of display lines."""
-    spec = model.get("spec", "?")
-    name = model.get("name", "unknown")
-    shown = model.get("shown", False)
-    visibility = "shown" if shown else "hidden"
+    """Format a single model dict into a list of display lines.
 
-    # Line 1: basic info
-    line1 = f"#{spec}, {name}, {visibility}"
-    triangle_count = model.get("triangle count") or model.get("triangles")
-    if triangle_count is not None:
-        line1 += f", {triangle_count} triangles"
+    Accepts the aggregated format from ChimeraX 1.11.1 REST API:
+        {"spec": "#1", "name": "1abc", "class": "AtomicStructure",
+         "display": True, "num_atoms": 6087}
+    """
+    spec = model.get("spec", "?")
+    # spec already has '#' prefix from the new format; don't double-prefix
+    if not str(spec).startswith("#"):
+        spec = f"#{spec}"
+
+    name = model.get("name", "unknown")
+    model_class = model.get("class", "")
+
+    # Accept both old "shown" and new "display" keys
+    display = model.get("display", model.get("shown", False))
+    visibility = "shown" if display else "hidden"
+
+    # Build the main line
+    class_part = f" ({model_class})" if model_class else ""
+    line1 = f"{spec}, {name}{class_part}, {visibility}"
 
     lines = [line1]
 
-    # Volume model (has "size" key)
-    if "size" in model:
-        size = model["size"]
-        size_str = ",".join(str(s) for s in size)
-        vol_parts = [f"size {size_str}"]
-
-        step = model.get("step")
-        if step is not None:
-            vol_parts.append(f"step {step}")
-
-        voxel_size = model.get("voxel size")
-        if voxel_size is not None:
-            vol_parts.append(f"voxel size {voxel_size}")
-
-        surface_levels = model.get("surface levels", [])
-        if surface_levels:
-            levels_str = ", ".join(str(l) for l in surface_levels)
-            vol_parts.append(f"level {levels_str}")
-
-        min_val = model.get("minimum value")
-        max_val = model.get("maximum value")
-        if min_val is not None and max_val is not None:
-            vol_parts.append(f"range {min_val} to {max_val}")
-
-        value_type = model.get("value type")
-        if value_type:
-            vol_parts.append(f"type {value_type}")
-
-        num_sym = model.get("num symmetry operators")
-        if num_sym is not None:
-            vol_parts.append(f"{num_sym} symmetry operators")
-
-        lines.append(", ".join(vol_parts))
-        return lines
-
-    # Atomic structure (has "num atoms" key)
-    num_atoms = model.get("num atoms")
-    if num_atoms is not None and num_atoms > 0:
-        num_bonds = model.get("num bonds", 0)
-        num_residues = model.get("num residues", 0)
-        chains = model.get("chains", [])
-
-        detail_parts = [f"{num_atoms} atoms", f"{num_bonds} bonds", f"{num_residues} residues"]
-
-        if chains:
-            chains_str = ",".join(chains)
-            detail_parts.append(f"{len(chains)} chains ({chains_str})")
-
-        lines.append(", ".join(detail_parts))
-
-        # Pseudobond groups
-        pbond_groups = model.get("pseudobond groups", [])
-        for pbg in pbond_groups:
-            pbg_name = pbg.get("name", "")
-            pbg_count = pbg.get("num pseudobonds", 0)
-            lines.append(f"  pseudobond group '{pbg_name}': {pbg_count} pseudobonds")
+    # Atom count — accept both "num_atoms" and legacy "num atoms"
+    num_atoms = model.get("num_atoms", model.get("num atoms"))
+    if num_atoms is not None:
+        lines.append(f"  {num_atoms} atoms")
 
     return lines

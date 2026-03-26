@@ -14,6 +14,7 @@ from chimerax_mcp.chimera_rest import (
     find_chimerax_executable,
     list_running_instances,
     cleanup,
+    parse_info_json,
 )
 import chimerax_mcp.chimera_rest as rest
 from chimerax_mcp.formatting import format_chimerax_response, format_single_model_info
@@ -139,44 +140,40 @@ async def get_atomspec_guide() -> str:
 async def _get_chain_info_helper(
     model_id: str, chain_id: str, session_id: Optional[int] = None
 ) -> tuple[str, dict]:
-    """Query chain attributes via the ChimeraX ``info chains`` command.
+    """Query chain info via a single ``info chains`` call.
+
+    ChimeraX 1.11.1 returns all chain data (chain_id, sequence,
+    polymer type, residues list) in one response.
 
     Returns (formatted_text, chain_data_dict).
     """
-    attributes = [
-        "chain_id",
-        "polymer_type",
-        "description",
-        "num_residues",
-        "num_existing_residues",
-    ]
+    result = await run_chimerax_command(
+        f"info chains #{model_id}/{chain_id}", session_id
+    )
+    rows = parse_info_json(result)
 
     chain_data: dict = {}
-    for attr in attributes:
-        try:
-            result = await run_chimerax_command(
-                f"info chains #{model_id}/{chain_id} attribute {attr}",
-                session_id,
-            )
-            json_values = result.get("json_values", [])
-            if json_values:
-                value = json_values[0]
-                if isinstance(value, dict):
-                    # The info command returns {atomspec: value} dicts
-                    for spec, val in value.items():
-                        chain_data[attr] = val
-                        break
-                else:
-                    chain_data[attr] = value
-        except Exception:
-            chain_data[attr] = "N/A"
+    if rows:
+        row = rows[0]
+        chain_data["chain_id"] = row.get("value", row.get("chain_id", chain_id))
+        chain_data["sequence"] = row.get("sequence", "")
+        chain_data["polymer_type"] = row.get("polymer type", "unknown")
+        residues = row.get("residues", [])
+        chain_data["num_residues"] = len(residues)
+    else:
+        chain_data["chain_id"] = chain_id
+        chain_data["sequence"] = ""
+        chain_data["polymer_type"] = "N/A"
+        chain_data["num_residues"] = 0
 
     # Format the chain info
-    lines = []
-    lines.append(f"Chain {chain_data.get('chain_id', chain_id)} of model #{model_id}:")
-    lines.append(f"  Polymer type: {chain_data.get('polymer_type', 'N/A')}")
-    lines.append(f"  Description: {chain_data.get('description', 'N/A')}")
-    lines.append(f"  Residues: {chain_data.get('num_existing_residues', 'N/A')}/{chain_data.get('num_residues', 'N/A')}")
+    seq_len = len(chain_data["sequence"])
+    lines = [
+        f"Chain {chain_data['chain_id']} of model #{model_id}:",
+        f"  Polymer type: {chain_data['polymer_type']}",
+        f"  Residues: {chain_data['num_residues']}",
+        f"  Sequence length: {seq_len}",
+    ]
 
     text = "\n".join(lines)
     return text, chain_data
@@ -190,24 +187,53 @@ async def _get_chain_info_helper(
 async def list_models(session_id: Optional[int] = None) -> str:
     """List all models currently loaded in ChimeraX.
 
-    Returns model IDs, names, types, visibility, and basic stats
-    (atoms, bonds, residues, chains for atomic structures; size/step for volumes).
+    Returns model IDs, names, types, visibility, and basic stats.
 
     Args:
         session_id: ChimeraX session port (defaults to primary session)
     """
-    result = await run_chimerax_command("info", session_id)
-    json_values = result.get("json_values", [])
-    if not json_values:
+    # Step 1: Get name + class for each model
+    info_result = await run_chimerax_command("info models", session_id)
+    rows = parse_info_json(info_result)
+    if not rows:
         return "No models loaded"
 
-    models = json_values[0] if json_values else []
-    if not isinstance(models, list):
-        models = [models]
+    # Build lookup by spec
+    models_by_spec: dict[str, dict] = {}
+    for row in rows:
+        spec = row.get("spec", "")
+        models_by_spec[spec] = {
+            "spec": spec,
+            "name": row.get("value", row.get("name", "unknown")),
+            "class": row.get("class", ""),
+        }
 
-    if not models:
-        return "No models loaded"
+    # Step 2: Get visibility (display attribute)
+    try:
+        display_result = await run_chimerax_command(
+            "info models attribute display", session_id
+        )
+        for row in parse_info_json(display_result):
+            spec = row.get("spec", "")
+            if spec in models_by_spec:
+                models_by_spec[spec]["display"] = row.get("value", False)
+    except Exception:
+        pass
 
+    # Step 3: Get atom counts
+    try:
+        atoms_result = await run_chimerax_command(
+            "info models attribute num_atoms", session_id
+        )
+        for row in parse_info_json(atoms_result):
+            spec = row.get("spec", "")
+            if spec in models_by_spec:
+                models_by_spec[spec]["num_atoms"] = row.get("value")
+    except Exception:
+        pass
+
+    # Format output
+    models = list(models_by_spec.values())
     output_lines = [f"Models loaded: {len(models)}\n"]
     for model in models:
         model_lines = format_single_model_info(model)
@@ -223,20 +249,24 @@ async def list_models(session_id: Optional[int] = None) -> str:
 
 @mcp.tool()
 async def get_shown(session_id: Optional[int] = None) -> str:
-    """Get visibility/shown status of all models and representations in ChimeraX.
+    """Get visibility/display status of all models in ChimeraX.
 
-    Returns JSON data showing which models, atoms, bonds, ribbons, and surfaces
-    are currently visible.
+    Returns a JSON summary showing which models are currently displayed.
 
     Args:
         session_id: ChimeraX session port (defaults to primary session)
     """
-    result = await run_chimerax_command("info shown", session_id)
-    json_values = result.get("json_values", [])
-    if json_values:
-        data = json_values[0]
-        return json.dumps({"models": data}, indent=2)
-    return json.dumps({"models": []}, indent=2)
+    result = await run_chimerax_command("info models attribute display", session_id)
+    rows = parse_info_json(result)
+
+    models = []
+    for row in rows:
+        models.append({
+            "spec": row.get("spec", "?"),
+            "display": row.get("value", False),
+        })
+
+    return json.dumps({"models": models}, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -253,43 +283,67 @@ async def get_model_info(
         model_id: Model identifier (e.g., '1' for model #1)
         session_id: ChimeraX session port (defaults to primary session)
     """
-    result = await run_chimerax_command("info", session_id)
-    json_values = result.get("json_values", [])
-    if not json_values:
-        return f"Model #{model_id} not found (no models loaded)"
+    spec = f"#{model_id}"
+    model_data: dict = {"spec": spec}
 
-    models = json_values[0] if json_values else []
-    if not isinstance(models, list):
-        models = [models]
+    # Query 1: name + class
+    try:
+        result = await run_chimerax_command(f"info models {spec}", session_id)
+        rows = parse_info_json(result)
+        if not rows:
+            return f"Model {spec} not found (no models loaded)"
+        row = rows[0]
+        model_data["name"] = row.get("value", row.get("name", "unknown"))
+        model_data["class"] = row.get("class", "")
+    except Exception as e:
+        return f"Model {spec} not found: {e}"
 
-    # Find the requested model
-    target_model = None
-    for model in models:
-        spec = str(model.get("spec", ""))
-        if spec == str(model_id):
-            target_model = model
-            break
+    # Queries 2-5: individual attributes
+    attr_queries = [
+        ("num_atoms", "num_atoms"),
+        ("num_residues", "num_residues"),
+        ("num_bonds", "num_bonds"),
+        ("display", "display"),
+    ]
+    for attr_name, key in attr_queries:
+        try:
+            result = await run_chimerax_command(
+                f"info models {spec} attribute {attr_name}", session_id
+            )
+            rows = parse_info_json(result)
+            if rows:
+                model_data[key] = rows[0].get("value")
+        except Exception:
+            pass
 
-    if target_model is None:
-        available = [str(m.get("spec", "?")) for m in models]
-        return f"Model #{model_id} not found. Available models: {', '.join(available)}"
+    # Format summary
+    output_lines = format_single_model_info(model_data)
+    num_residues = model_data.get("num_residues")
+    num_bonds = model_data.get("num_bonds")
+    if num_residues is not None:
+        output_lines.append(f"  {num_residues} residues")
+    if num_bonds is not None:
+        output_lines.append(f"  {num_bonds} bonds")
 
-    # Format basic model info
-    model_lines = format_single_model_info(target_model)
-    output_lines = model_lines.copy()
-
-    # Get chain info for each chain if it's an atomic structure
-    chains = target_model.get("chains", [])
-    if chains:
-        output_lines.append("\nChain details:")
-        for chain in chains:
-            try:
-                chain_text, _chain_data = await _get_chain_info_helper(
-                    model_id, chain, session_id
+    # Query 6: chain details in one call
+    try:
+        chain_result = await run_chimerax_command(
+            f"info chains {spec}", session_id
+        )
+        chain_rows = parse_info_json(chain_result)
+        if chain_rows:
+            output_lines.append(f"\nChain details ({len(chain_rows)} chains):")
+            for crow in chain_rows:
+                cid = crow.get("value", crow.get("chain_id", "?"))
+                ptype = crow.get("polymer type", "unknown")
+                seq = crow.get("sequence", "")
+                residues = crow.get("residues", [])
+                output_lines.append(
+                    f"  Chain {cid} ({ptype}): {len(residues)} residues, "
+                    f"sequence length {len(seq)}"
                 )
-                output_lines.append(chain_text)
-            except Exception as e:
-                output_lines.append(f"  Chain {chain}: error getting details ({e})")
+    except Exception:
+        pass
 
     return "\n".join(output_lines)
 
@@ -879,12 +933,16 @@ async def get_session_info(session_id: Optional[int] = None) -> str:
 
     # Model list
     try:
-        info_result = await run_chimerax_command("info", session_id)
-        json_values = info_result.get("json_values", [])
-        if json_values and json_values[0]:
-            model_data = json_values[0] if isinstance(json_values[0], list) else json.loads(json_values[0])
-            output.append(f"\nModels ({len(model_data)} loaded):")
-            for model in model_data:
+        info_result = await run_chimerax_command("info models", session_id)
+        model_rows = parse_info_json(info_result)
+        if model_rows:
+            output.append(f"\nModels ({len(model_rows)} loaded):")
+            for row in model_rows:
+                model = {
+                    "spec": row.get("spec", "?"),
+                    "name": row.get("value", row.get("name", "unknown")),
+                    "class": row.get("class", ""),
+                }
                 lines = format_single_model_info(model)
                 for line in lines:
                     output.append(f"  {line}")
@@ -895,14 +953,18 @@ async def get_session_info(session_id: Optional[int] = None) -> str:
 
     # Visibility state
     try:
-        shown_result = await run_chimerax_command("info shown", session_id)
-        shown_json = shown_result.get("json_values", [])
-        if shown_json and shown_json[0]:
-            display_data = shown_json[0] if isinstance(shown_json[0], list) else json.loads(shown_json[0])
-            if display_data:
-                output.append(f"\nVisible objects: {len(display_data)} model(s) have visible elements")
-            else:
-                output.append("\nNo objects currently visible.")
+        display_result = await run_chimerax_command(
+            "info models attribute display", session_id
+        )
+        display_rows = parse_info_json(display_result)
+        if display_rows:
+            visible_count = sum(
+                1 for r in display_rows if r.get("value", False)
+            )
+            output.append(
+                f"\nVisibility: {visible_count}/{len(display_rows)} "
+                f"model(s) displayed"
+            )
         else:
             output.append("\nNo visibility data available.")
     except Exception as e:

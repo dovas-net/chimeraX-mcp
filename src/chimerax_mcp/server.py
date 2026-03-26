@@ -682,3 +682,83 @@ async def show_hide_objects(
 
     context = f"Success: {command}\nThis action affected {counts_string}"
     return format_chimerax_response(result, context)
+
+
+# ---------------------------------------------------------------------------
+# Tool 18: measure_distance
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def measure_distance(atom1: str, atom2: str, session_id: Optional[int] = None) -> str:
+    """Measure the distance between two atoms or atomspecs.
+
+    Args:
+        atom1: Atomspec for first point (e.g., '#1/A:100@CA')
+        atom2: Atomspec for second point (e.g., '#1/A:200@CA')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"distance {atom1} {atom2}"
+    result = await run_chimerax_command(command, session_id)
+    context = f"Distance measurement: {atom1} to {atom2}"
+    return format_chimerax_response(result, context)
+
+
+# ---------------------------------------------------------------------------
+# Tool 19: find_hbonds
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def find_hbonds(target: str = "all", inter_model: bool = False, session_id: Optional[int] = None) -> str:
+    """Find hydrogen bonds in a structure.
+
+    Args:
+        target: Atomspec to analyze (default: 'all')
+        inter_model: If True, find H-bonds between different models (default: False)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"hbonds {target}"
+    if inter_model:
+        command += " interModel true"
+    result = await run_chimerax_command(command, session_id)
+    context = f"Hydrogen bond analysis for {target}"
+    return format_chimerax_response(result, context)
+
+
+# ---------------------------------------------------------------------------
+# Tool 20: find_clashes
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def find_clashes(target: str, restrict: str = "both", overlap_cutoff: float = 0.6, session_id: Optional[int] = None) -> str:
+    """Find steric clashes or contacts in a structure.
+
+    Args:
+        target: Atomspec to check for clashes
+        restrict: 'both' (clashes within target) or 'any' (clashes with anything)
+        overlap_cutoff: Minimum overlap in Angstroms for a clash (default: 0.6)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"clashes {target} restrict {restrict} overlapCutoff {overlap_cutoff}"
+    result = await run_chimerax_command(command, session_id)
+    context = f"Clash analysis for {target} (restrict={restrict}, cutoff={overlap_cutoff})"
+    return format_chimerax_response(result, context)
+
+
+# ---------------------------------------------------------------------------
+# Tool 21: align_structures
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def align_structures(match_model: str, ref_model: str, chain_pairing: str = "bb", session_id: Optional[int] = None) -> str:
+    """Align two structures using matchmaker (structural alignment).
+
+    Args:
+        match_model: Model to move (e.g., '#2')
+        ref_model: Reference model to align to (e.g., '#1')
+        chain_pairing: 'bb' (best-best chain pairing) or 'sc' (specific chain)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"matchmaker {match_model} to {ref_model} pairing {chain_pairing}"
+    result = await run_chimerax_command(command, session_id)
+    context = f"Structural alignment: {match_model} aligned to {ref_model}"
+    return format_chimerax_response(result, context)

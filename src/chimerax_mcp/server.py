@@ -533,3 +533,152 @@ async def set_default_session(session_id: int) -> str:
         f"Default session changed from port {old_default} "
         f"to port {session_id} ({session_name})"
     )
+
+
+# ---------------------------------------------------------------------------
+# Tool 15: open_structure
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def open_structure(
+    identifier: str,
+    format: str = "auto-detect",
+    fetch_emdb_map: bool = False,
+    session_id: Optional[int] = None,
+) -> str:
+    """Open a molecular structure file or fetch from PDB
+
+    Hints:
+    - If your user wants to look at both a structure and the density map, set fetch_emdb_map=True
+    - After opening a structure, run get_shown() to see the default representation
+
+    Args:
+        identifier: PDB ID (e.g., '1gcn') or file path to open
+        format: File format if needed (pdb, cif, etc.), defaults to auto-detect
+        fetch_emdb_map: If True, also fetch the corresponding EMDB map
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if fetch_emdb_map:
+        valid_formats = ["auto-detect", "pdb", "cif", "mmcif"]
+        if format not in valid_formats:
+            return f"Error: fetch_emdb_map=True only works with PDB or mmCIF formats. Specified format '{format}' is not compatible."
+
+    command = f"open {identifier}" if format == "auto-detect" else f"open {identifier} format {format}"
+    if fetch_emdb_map:
+        command += " fetchEmdbMap true"
+
+    result = await run_chimerax_command(command, session_id)
+    session_info = f" in session {session_id}" if session_id else ""
+    context = f"Opened structure: {identifier}{session_info}"
+    if fetch_emdb_map:
+        context += " (with EMDB map)"
+    return format_chimerax_response(result, context)
+
+
+# ---------------------------------------------------------------------------
+# Tool 16: save_image
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def save_image(
+    filename: str = "",
+    width: int = 1920,
+    height: int = 1080,
+    supersample: int = 3,
+    transparent_background: bool = False,
+    session_id: Optional[int] = None,
+) -> str:
+    """Save a screenshot of the current view
+
+    Before saving, clear selection with run_command('~select') to avoid green highlights.
+
+    Args:
+        filename: Output filename (e.g., 'structure.png'). If empty, auto-generates a timestamped name in /tmp.
+        width: Image width in pixels (default: 1920)
+        height: Image height in pixels (default: 1080)
+        supersample: Supersampling factor for higher quality (default: 3)
+        transparent_background: If True, save with transparent background (default: False)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if not filename:
+        import time
+        filename = f"/tmp/chimerax_{int(time.time())}.png"
+
+    command = f"save {filename} width {width} height {height} supersample {supersample}"
+    if transparent_background:
+        command += " transparentBackground true"
+
+    result = await run_chimerax_command(command, session_id)
+    session_info = f" from session {session_id}" if session_id else ""
+    context = f"Saved image: {filename}{session_info} ({width}x{height}, supersample {supersample})"
+    return format_chimerax_response(result, context)
+
+
+# ---------------------------------------------------------------------------
+# Tool 17: show_hide_objects
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def show_hide_objects(
+    action: str,
+    atomspec: str,
+    target: str,
+    session_id: Optional[int] = None,
+) -> str:
+    """Show or hide a specified selection of objects' representation.
+
+    For the target, use one or more of the following letters:
+    - a: atoms
+    - b: bonds
+    - c: cartoons/ribbons
+    - s: surfaces
+    - p: pseudobonds
+    - m: models (use for hiding maps)
+
+    Examples:
+        - Show atoms+bonds in model 1: action='show', atomspec='#1', target='ab'
+        - Hide everything in chain A: action='hide', atomspec='#1/A', target='abcs'
+        - Show ribbons in residues 1-50: action='show', atomspec='#2/B:1-50', target='c'
+
+    Important:
+        - Before showing a representation for the first time, hide all representations first
+        - After show/hide, check the response for affected count to verify correctness
+
+    Args:
+        action: 'show' or 'hide'
+        atomspec: Object specification (use get_atomspec_guide() for syntax)
+        target: What to show/hide (combination of a, b, c, s, p, m)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if action not in ["show", "hide"]:
+        raise ValueError("Action must be 'show' or 'hide'")
+    if any(letter not in "abcpsm" for letter in target):
+        raise ValueError("Target must be one or more of 'a', 'b', 'p', 'c', 's', 'm'")
+
+    # Select first for feedback on affected count
+    select_result = await run_chimerax_command(f"select {atomspec}", session_id)
+    note_logs = select_result.get("logs", {}).get("note", [])
+    counts_string = note_logs[1] if len(note_logs) > 1 else "unknown count"
+    counts_string = counts_string.replace(" selected", "")
+
+    if counts_string == "Nothing":
+        raise ValueError(f"No objects found matching atomspec: {atomspec}")
+
+    command = f"{action} {atomspec} target {target}"
+    result = await run_chimerax_command(command, session_id)
+
+    if action == "show":
+        model_result = await run_chimerax_command(f"show {atomspec} target m", session_id)
+        # Merge logs
+        combined_logs = {}
+        for res in [result, model_result]:
+            for level, messages in res.get("logs", {}).items():
+                combined_logs.setdefault(level, []).extend(messages)
+        result = {
+            "return_values": result.get("return_values", []) + model_result.get("return_values", []),
+            "json_values": result.get("json_values", []) + model_result.get("json_values", []),
+            "logs": combined_logs,
+        }
+
+    context = f"Success: {command}\nThis action affected {counts_string}"
+    return format_chimerax_response(result, context)

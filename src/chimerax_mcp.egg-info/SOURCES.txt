@@ -1,0 +1,9 @@
+pyproject.toml
+src/chimerax_mcp/__init__.py
+src/chimerax_mcp/__main__.py
+src/chimerax_mcp.egg-info/PKG-INFO
+src/chimerax_mcp.egg-info/SOURCES.txt
+src/chimerax_mcp.egg-info/dependency_links.txt
+src/chimerax_mcp.egg-info/entry_points.txt
+src/chimerax_mcp.egg-info/requires.txt
+src/chimerax_mcp.egg-info/top_level.txt

@@ -111,39 +111,27 @@ class TestAddErrorHints:
 class TestFormatSingleModelInfo:
     def test_atomic_structure(self):
         model = {
-            "spec": "1",
+            "spec": "#1",
             "name": "1abc",
-            "shown": True,
-            "num atoms": 5000,
-            "num bonds": 5100,
-            "num residues": 300,
-            "chains": ["A", "B"],
+            "class": "AtomicStructure",
+            "display": True,
+            "num_atoms": 5000,
         }
         lines = format_single_model_info(model)
-        assert "#1, 1abc, shown" in lines[0]
+        assert "#1, 1abc (AtomicStructure), shown" in lines[0]
         assert "5000 atoms" in lines[1]
-        assert "2 chains (A,B)" in lines[1]
 
     def test_volume_model(self):
         model = {
-            "spec": "2",
+            "spec": "#2",
             "name": "map",
-            "shown": True,
-            "size": [400, 400, 400],
-            "step": 1,
-            "voxel size": 1.06,
-            "surface levels": [5.0],
-            "minimum value": -3.0,
-            "maximum value": 12.0,
-            "value type": "float32",
-            "num symmetry operators": 0,
+            "class": "Volume",
+            "display": True,
         }
         lines = format_single_model_info(model)
-        combined = " ".join(lines)
-        assert "size 400,400,400" in combined
-        assert "level 5.0" in combined
+        assert "#2, map (Volume), shown" in lines[0]
 
     def test_hidden_model(self):
-        model = {"spec": "3", "name": "test", "shown": False}
+        model = {"spec": "#3", "name": "test", "display": False}
         lines = format_single_model_info(model)
         assert "hidden" in lines[0]

@@ -34,7 +34,7 @@ claude mcp add chimerax -- python -m chimerax_mcp
 
 That's it. ChimeraX will auto-launch with REST enabled when you first use a tool.
 
-## Available Tools (25)
+## Available Tools (38)
 
 ### Core
 - **run_command** - Execute any ChimeraX command directly
@@ -60,9 +60,28 @@ That's it. ChimeraX will auto-launch with REST enabled when you first use a tool
 - **find_clashes** - Steric clash detection
 - **align_structures** - Structural alignment (matchmaker)
 - **superpose_residue** - Ligand superposition
+- **measure_angle** - Measure the angle between three atoms
+- **measure_torsion** - Measure the torsion angle between four atoms
+- **measure_sasa** - Solvent-accessible surface area calculation
+- **measure_center** - Calculate center of mass for a selection
+- **measure_buried_area** - Buried surface area between two chains
+
+### Sequence
+- **get_sequence** - Get the sequence of a chain in FASTA format
+- **blast_search** - Run BLAST sequence search against PDB
+
+### Structure Editing
+- **swap_residue** - Mutate a residue to a different amino acid
+- **add_hydrogens** - Add hydrogen atoms to a structure
+- **minimize_structure** - Energy minimize a structure
 
 ### Prediction
 - **predict_structure** - AlphaFold/ESMFold structure prediction
+
+### Volume & Maps
+- **fit_in_map** - Fit atomic model into an electron density map
+- **measure_surface_area** - Measure surface area of a molecular surface
+- **measure_map_stats** - Get density map statistics (mean, RMS, min, max)
 
 ### Session Management
 - **get_session_info** - Full session overview

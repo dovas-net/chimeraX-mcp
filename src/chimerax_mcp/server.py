@@ -971,3 +971,250 @@ async def get_session_info(session_id: Optional[int] = None) -> str:
         output.append(f"\nCould not retrieve visibility info: {e}")
 
     return "\n".join(output)
+
+
+# ---------------------------------------------------------------------------
+# Tool 26: measure_angle
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def measure_angle(atom1: str, atom2: str, atom3: str, session_id: Optional[int] = None) -> str:
+    """Measure the angle formed by three atoms.
+
+    Args:
+        atom1: Atomspec for first atom
+        atom2: Atomspec for vertex atom (center of angle)
+        atom3: Atomspec for third atom
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"angle {atom1} {atom2} {atom3}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Angle: {atom1} - {atom2} - {atom3}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 27: measure_torsion
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def measure_torsion(atom1: str, atom2: str, atom3: str, atom4: str, session_id: Optional[int] = None) -> str:
+    """Measure the dihedral (torsion) angle formed by four atoms.
+
+    Args:
+        atom1: Atomspec for first atom
+        atom2: Atomspec for second atom
+        atom3: Atomspec for third atom
+        atom4: Atomspec for fourth atom
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"torsion {atom1} {atom2} {atom3} {atom4}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Torsion: {atom1} - {atom2} - {atom3} - {atom4}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 28: measure_sasa
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def measure_sasa(target: str = "all", session_id: Optional[int] = None) -> str:
+    """Calculate solvent-accessible surface area (SASA).
+
+    Args:
+        target: Atomspec to measure (default: 'all')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"measure sasa {target}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"SASA for {target}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 29: measure_center
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def measure_center(target: str = "all", session_id: Optional[int] = None) -> str:
+    """Calculate the center of mass of a selection.
+
+    Args:
+        target: Atomspec to measure (default: 'all')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"measure center {target}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Center of mass for {target}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 30: measure_buried_area
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def measure_buried_area(target1: str, target2: str, session_id: Optional[int] = None) -> str:
+    """Calculate buried solvent-accessible surface area between two sets of atoms.
+
+    Args:
+        target1: Atomspec for first group of atoms
+        target2: Atomspec for second group of atoms
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"measure buriedArea {target1} withAtoms2 {target2}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Buried area between {target1} and {target2}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 31: get_sequence
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def get_sequence(model_id: str, chain_id: str, session_id: Optional[int] = None) -> str:
+    """Get the amino acid or nucleotide sequence of a chain.
+
+    Returns the sequence in FASTA-like format with chain metadata.
+
+    Args:
+        model_id: Model identifier (e.g., '1' for #1)
+        chain_id: Chain identifier (e.g., 'A')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    result = await run_chimerax_command(f"info chains #{model_id}/{chain_id}", session_id)
+    rows = parse_info_json(result)
+    if not rows:
+        return f"No sequence data for chain {chain_id} in model #{model_id}"
+
+    row = rows[0]
+    sequence = row.get("sequence", "")
+    polymer_type = row.get("polymer type", "unknown")
+    chain_name = row.get("value", chain_id)
+
+    if not sequence:
+        return f"Chain {chain_name} has no sequence data"
+
+    header = f">Chain {chain_name} | Model #{model_id} | {polymer_type} | {len(sequence)} residues"
+    seq_lines = [sequence[i:i+80] for i in range(0, len(sequence), 80)]
+    return header + "\n" + "\n".join(seq_lines)
+
+
+# ---------------------------------------------------------------------------
+# Tool 32: blast_search
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def blast_search(query: str, database: str = "pdb", session_id: Optional[int] = None) -> str:
+    """Run a BLAST protein search from a sequence or chain.
+
+    Args:
+        query: Amino acid sequence or atomspec (e.g., '#1/A')
+        database: Database to search ('pdb' or 'nr', default: 'pdb')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"blastprotein {query} database {database}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"BLAST search ({database}): {query[:50]}...")
+
+
+# ---------------------------------------------------------------------------
+# Tool 33: swap_residue
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def swap_residue(atomspec: str, new_residue: str, session_id: Optional[int] = None) -> str:
+    """Mutate a residue to a different amino acid type (swap sidechain).
+
+    Args:
+        atomspec: Atomspec for the residue to mutate (e.g., '#1/A:100')
+        new_residue: Three-letter code for the new residue (e.g., 'ALA', 'GLY', 'PHE')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"swapaa {atomspec} {new_residue}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Swapped {atomspec} to {new_residue}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 34: add_hydrogens
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def add_hydrogens(target: str = "all", session_id: Optional[int] = None) -> str:
+    """Add hydrogen atoms to a structure.
+
+    Args:
+        target: Atomspec to add hydrogens to (default: 'all')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"addh {target}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Added hydrogens to {target}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 35: minimize_structure
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def minimize_structure(target: str = "all", steps: int = 100, session_id: Optional[int] = None) -> str:
+    """Run energy minimization on a structure.
+
+    Args:
+        target: Atomspec to minimize (default: 'all')
+        steps: Number of minimization steps (default: 100)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"minimize {target} steps {steps}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Minimized {target} ({steps} steps)")
+
+
+# ---------------------------------------------------------------------------
+# Tool 36: fit_in_map
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def fit_in_map(model: str, map_model: str, session_id: Optional[int] = None) -> str:
+    """Fit an atomic model into a density map.
+
+    Args:
+        model: Atomspec for the atomic model to fit (e.g., '#1')
+        map_model: Atomspec for the map/volume (e.g., '#2')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"fitmap {model} inMap {map_model}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Fit {model} into map {map_model}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 37: measure_surface_area
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def measure_surface_area(target: str, session_id: Optional[int] = None) -> str:
+    """Measure the surface area of a molecular surface.
+
+    Args:
+        target: Atomspec for the surface to measure (e.g., '#1')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"measure area {target}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Surface area of {target}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 38: measure_map_stats
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def measure_map_stats(map_model: str, session_id: Optional[int] = None) -> str:
+    """Get statistics for a density map (min, max, mean, RMS, etc.).
+
+    Args:
+        map_model: Atomspec for the map/volume model (e.g., '#2')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"measure mapstats {map_model}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Map statistics for {map_model}")

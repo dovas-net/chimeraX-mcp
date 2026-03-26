@@ -49,3 +49,72 @@ class TestAlignStructures:
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result):
             result = await align_structures("#2", "#1")
             assert "1.23" in result
+
+
+class TestPredictStructure:
+    @pytest.mark.asyncio
+    async def test_validates_invalid_sequence(self):
+        from chimerax_mcp.server import predict_structure
+        with pytest.raises(ValueError, match="Invalid"):
+            await predict_structure("NOTAVALIDSEQUENCE123!!!")
+
+    @pytest.mark.asyncio
+    async def test_validates_invalid_method(self):
+        from chimerax_mcp.server import predict_structure
+        with pytest.raises(ValueError, match="Method"):
+            await predict_structure("MKTLLILAVL", method="deepfold")
+
+    @pytest.mark.asyncio
+    async def test_accepts_valid_sequence(self):
+        from chimerax_mcp.server import predict_structure
+        mock_result = make_result(logs={"info": ["AlphaFold prediction complete"]})
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result):
+            result = await predict_structure("MKTLLILAVL")
+            assert "prediction" in result.lower() or "AlphaFold" in result
+
+
+class TestSetScene:
+    @pytest.mark.asyncio
+    async def test_sets_background_only(self):
+        from chimerax_mcp.server import set_scene
+        calls = []
+        async def mock_run(cmd, port=None):
+            calls.append(cmd)
+            return make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", side_effect=mock_run):
+            await set_scene(background="white")
+            assert any("bgColor" in c for c in calls)
+            assert not any("lighting" in c for c in calls)
+
+    @pytest.mark.asyncio
+    async def test_sets_all_params(self):
+        from chimerax_mcp.server import set_scene
+        calls = []
+        async def mock_run(cmd, port=None):
+            calls.append(cmd)
+            return make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", side_effect=mock_run):
+            await set_scene(background="black", lighting="soft", silhouettes=True, camera="orthographic")
+            assert len(calls) == 4
+
+
+class TestCloseModels:
+    @pytest.mark.asyncio
+    async def test_close_all(self):
+        from chimerax_mcp.server import close_models
+        mock_result = make_result(logs={"info": ["All models closed"]})
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result):
+            result = await close_models("all")
+            assert "close" in result.lower() or "closed" in result.lower() or "Command" in result
+
+
+class TestGetSessionInfo:
+    @pytest.mark.asyncio
+    async def test_returns_combined_info(self):
+        from chimerax_mcp.server import get_session_info
+        info_result = make_result(json_values=[[{"spec": "1", "name": "test", "shown": True}]])
+        shown_result = make_result(json_values=[[]])
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, side_effect=[info_result, shown_result]):
+            with patch("chimerax_mcp.server.is_chimerax_running", new_callable=AsyncMock, return_value=True):
+                result = await get_session_info()
+                assert "test" in result or "model" in result.lower()

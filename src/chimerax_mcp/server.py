@@ -762,3 +762,150 @@ async def align_structures(match_model: str, ref_model: str, chain_pairing: str 
     result = await run_chimerax_command(command, session_id)
     context = f"Structural alignment: {match_model} aligned to {ref_model}"
     return format_chimerax_response(result, context)
+
+
+# ---------------------------------------------------------------------------
+# Tool 22: predict_structure
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def predict_structure(sequence: str, method: str = "alphafold", session_id: Optional[int] = None) -> str:
+    """Predict a protein structure from an amino acid sequence.
+
+    Args:
+        sequence: Amino acid sequence (e.g., 'MKTLLILAVL...')
+        method: Prediction method - 'alphafold' or 'esmfold' (default: 'alphafold')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if method not in ("alphafold", "esmfold"):
+        raise ValueError(f"Method must be 'alphafold' or 'esmfold', got '{method}'")
+
+    valid_aa = set("ACDEFGHIKLMNPQRSTVWY")
+    seq_upper = sequence.upper().strip()
+    if not seq_upper or not all(c in valid_aa for c in seq_upper):
+        raise ValueError(f"Invalid amino acid sequence. Use only standard amino acid letters: {''.join(sorted(valid_aa))}")
+
+    command = f"{method} predict {seq_upper}"
+    result = await run_chimerax_command(command, session_id)
+    context = f"Structure prediction ({method}) for sequence ({len(seq_upper)} residues)"
+    return format_chimerax_response(result, context)
+
+
+# ---------------------------------------------------------------------------
+# Tool 23: set_scene
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def set_scene(
+    background: Optional[str] = None,
+    lighting: Optional[str] = None,
+    silhouettes: Optional[bool] = None,
+    camera: Optional[str] = None,
+    session_id: Optional[int] = None,
+) -> str:
+    """Set scene properties for publication-quality rendering.
+
+    Only specified parameters are changed; others remain unchanged.
+
+    Args:
+        background: Background color (e.g., 'white', 'black', '#f0f0f0')
+        lighting: Lighting preset ('default', 'soft', 'full', 'flat')
+        silhouettes: Enable edge outlines (True/False)
+        camera: Camera type ('perspective' or 'orthographic')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    commands = []
+    if background is not None:
+        commands.append(f"set bgColor {background}")
+    if lighting is not None:
+        commands.append(f"lighting {lighting}")
+    if silhouettes is not None:
+        commands.append(f"set silhouettes {'true' if silhouettes else 'false'}")
+    if camera is not None:
+        commands.append(f"camera {camera}")
+
+    if not commands:
+        return "No scene properties specified. Provide at least one of: background, lighting, silhouettes, camera."
+
+    results = []
+    for cmd in commands:
+        await run_chimerax_command(cmd, session_id)
+        results.append(cmd)
+
+    return f"Scene updated:\n" + "\n".join(f"  - {cmd}" for cmd in results)
+
+
+# ---------------------------------------------------------------------------
+# Tool 24: close_models
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def close_models(target: str = "all", session_id: Optional[int] = None) -> str:
+    """Close (remove) models from the ChimeraX session.
+
+    Args:
+        target: Atomspec of models to close (e.g., '#1', '#2,3', 'all')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"close {target}"
+    result = await run_chimerax_command(command, session_id)
+    context = f"Closed models: {target}"
+    return format_chimerax_response(result, context)
+
+
+# ---------------------------------------------------------------------------
+# Tool 25: get_session_info
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def get_session_info(session_id: Optional[int] = None) -> str:
+    """Get a complete overview of the current ChimeraX session.
+
+    Combines model list, visibility state, and instance status in one call.
+    Use this as a first call to understand what's currently loaded and displayed.
+
+    Args:
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    output = []
+
+    # Instance status
+    port = session_id if session_id is not None else None
+    if port:
+        running = await is_chimerax_running(port)
+        output.append(f"Session on port {port}: {'running' if running else 'not running'}")
+    else:
+        output.append("Using auto-discovered session")
+
+    # Model list
+    try:
+        info_result = await run_chimerax_command("info", session_id)
+        json_values = info_result.get("json_values", [])
+        if json_values and json_values[0]:
+            model_data = json_values[0] if isinstance(json_values[0], list) else json.loads(json_values[0])
+            output.append(f"\nModels ({len(model_data)} loaded):")
+            for model in model_data:
+                lines = format_single_model_info(model)
+                for line in lines:
+                    output.append(f"  {line}")
+        else:
+            output.append("\nNo models loaded.")
+    except Exception as e:
+        output.append(f"\nCould not retrieve model info: {e}")
+
+    # Visibility state
+    try:
+        shown_result = await run_chimerax_command("info shown", session_id)
+        shown_json = shown_result.get("json_values", [])
+        if shown_json and shown_json[0]:
+            display_data = shown_json[0] if isinstance(shown_json[0], list) else json.loads(shown_json[0])
+            if display_data:
+                output.append(f"\nVisible objects: {len(display_data)} model(s) have visible elements")
+            else:
+                output.append("\nNo objects currently visible.")
+        else:
+            output.append("\nNo visibility data available.")
+    except Exception as e:
+        output.append(f"\nCould not retrieve visibility info: {e}")
+
+    return "\n".join(output)

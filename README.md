@@ -40,13 +40,163 @@ pip install -e .
 
 ## Setup
 
-Add the MCP server to Claude Code:
+Works with any MCP-compatible client. Pick yours:
+
+<details>
+<summary><b>Claude Code CLI</b></summary>
 
 ```bash
-claude mcp add chimerax -- .venv/bin/python -m chimerax_mcp
+claude mcp add chimerax -- /path/to/chimeraX-mcp/.venv/bin/python -m chimerax_mcp
+```
+</details>
+
+<details>
+<summary><b>Claude Desktop</b></summary>
+
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+```json
+{
+  "mcpServers": {
+    "chimerax": {
+      "command": "/path/to/chimeraX-mcp/.venv/bin/python",
+      "args": ["-m", "chimerax_mcp"]
+    }
+  }
+}
 ```
 
-That's it. ChimeraX will auto-launch with REST enabled when you first use a tool.
+Restart Claude Desktop after editing.
+</details>
+
+<details>
+<summary><b>Cursor</b></summary>
+
+Create `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project):
+
+```json
+{
+  "mcpServers": {
+    "chimerax": {
+      "command": "/path/to/chimeraX-mcp/.venv/bin/python",
+      "args": ["-m", "chimerax_mcp"]
+    }
+  }
+}
+```
+
+Restart Cursor after editing.
+</details>
+
+<details>
+<summary><b>GitHub Copilot (VS Code)</b></summary>
+
+Create `~/.config/Code/User/mcp.json` (global) or `.vscode/mcp.json` (project):
+
+```json
+{
+  "servers": {
+    "chimerax": {
+      "type": "stdio",
+      "command": "/path/to/chimeraX-mcp/.venv/bin/python",
+      "args": ["-m", "chimerax_mcp"]
+    }
+  }
+}
+```
+
+> **Note:** Copilot uses `"servers"`, not `"mcpServers"`. Tools only appear in **Agent mode**.
+</details>
+
+<details>
+<summary><b>Windsurf</b></summary>
+
+Edit `~/.codeium/windsurf/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "chimerax": {
+      "command": "/path/to/chimeraX-mcp/.venv/bin/python",
+      "args": ["-m", "chimerax_mcp"]
+    }
+  }
+}
+```
+
+> **Note:** Windsurf has a 100-tool limit across all MCP servers. Tools only work in Cascade mode.
+</details>
+
+<details>
+<summary><b>Cline (VS Code)</b></summary>
+
+Open Cline panel > MCP Servers icon > "Configure MCP Servers", or edit directly:
+
+```json
+{
+  "mcpServers": {
+    "chimerax": {
+      "command": "/path/to/chimeraX-mcp/.venv/bin/python",
+      "args": ["-m", "chimerax_mcp"],
+      "disabled": false
+    }
+  }
+}
+```
+</details>
+
+<details>
+<summary><b>OpenAI Codex CLI</b></summary>
+
+Edit `~/.codex/config.toml` (note: TOML format, not JSON):
+
+```toml
+[mcp_servers.chimerax]
+command = "/path/to/chimeraX-mcp/.venv/bin/python"
+args = ["-m", "chimerax_mcp"]
+enabled = true
+tool_timeout_sec = 90
+```
+</details>
+
+<details>
+<summary><b>Gemini CLI</b></summary>
+
+Edit `~/.gemini/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "chimerax": {
+      "command": "/path/to/chimeraX-mcp/.venv/bin/python",
+      "args": ["-m", "chimerax_mcp"],
+      "timeout": 90000
+    }
+  }
+}
+```
+
+> **Note:** Gemini timeout is in **milliseconds**.
+</details>
+
+<details>
+<summary><b>Continue.dev</b></summary>
+
+Add to `~/.continue/config.yaml`:
+
+```yaml
+mcpServers:
+  - name: chimerax
+    command: /path/to/chimeraX-mcp/.venv/bin/python
+    args:
+      - -m
+      - chimerax_mcp
+```
+
+Tools only available in **Agent mode**.
+</details>
+
+Replace `/path/to/chimeraX-mcp` with your actual install path. ChimeraX auto-launches when you first use a tool.
 
 ## Configuration
 

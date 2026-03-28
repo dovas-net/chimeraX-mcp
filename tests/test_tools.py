@@ -542,15 +542,19 @@ class TestSetCartoon:
             await set_cartoon("#1")
             cmd = mock.call_args[0][0]
             assert "cartoon #1" in cmd
-            assert "suppress true" in cmd
+            assert "suppressBackboneDisplay true" in cmd
 
     @pytest.mark.asyncio
     async def test_styled_cartoon(self):
         from chimerax_mcp.server import set_cartoon
         mock_result = make_result()
-        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
-            await set_cartoon("#1", style="edged")
-            assert "style edged" in mock.call_args[0][0]
+        calls = []
+        async def mock_run(cmd, port=None, timeout=None):
+            calls.append(cmd)
+            return mock_result
+        with patch("chimerax_mcp.server.run_chimerax_command", side_effect=mock_run):
+            await set_cartoon("#1", xsection="barbell")
+            assert any("cartoon style #1 xsection barbell" in c for c in calls)
 
 
 class TestSetClipping:
@@ -1314,7 +1318,7 @@ class TestGetCoordinates:
         mock_result = make_result(logs={"info": ["10.5 20.3 30.1"]})
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             result = await get_coordinates("#1/A:100@CA")
-            assert "getcrd #1/A:100@CA" == mock.call_args[0][0]
+            assert "define centroid #1/A:100@CA" == mock.call_args[0][0]
 
 
 class TestSetGraphics:

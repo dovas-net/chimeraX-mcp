@@ -1546,7 +1546,7 @@ async def set_style(
 @mcp.tool()
 async def set_cartoon(
     target: str = "all",
-    style: str = "",
+    xsection: str = "",
     hide_backbone: bool = True,
     session_id: Optional[int] = None,
 ) -> str:
@@ -1554,18 +1554,22 @@ async def set_cartoon(
 
     Args:
         target: Atomspec for the cartoon (e.g., '#1', '#1/A')
-        style: Ribbon style - 'rounded', 'edged', 'piping', 'plain', or '' for default
+        xsection: Cross-section shape - 'oval' (round), 'rectangle' (square), 'barbell' (piping), or '' for default
         hide_backbone: Hide backbone atoms when showing cartoon (default: True)
         session_id: ChimeraX session port (defaults to primary session)
     """
+    # Show the cartoon
     command = f"cartoon {target}"
-    if style:
-        if style not in ("rounded", "edged", "piping", "plain"):
-            raise ValueError(f"Style must be 'rounded', 'edged', 'piping', or 'plain'")
-        command += f" style {style}"
     if hide_backbone:
-        command += " suppress true"
+        command += " suppressBackboneDisplay true"
     result = await run_chimerax_command(command, session_id)
+
+    # Apply style as a separate subcommand if requested
+    if xsection:
+        if xsection not in ("oval", "rectangle", "barbell"):
+            raise ValueError(f"xsection must be 'oval', 'rectangle', or 'barbell'")
+        await run_chimerax_command(f"cartoon style {target} xsection {xsection}", session_id)
+
     return format_chimerax_response(result, f"Cartoon set for {target}")
 
 
@@ -1617,7 +1621,7 @@ async def calculate_rmsd(
         session_id: ChimeraX session port (defaults to primary session)
     """
     atoms1, atoms2 = validate_atomspec(atoms1), validate_atomspec(atoms2)
-    command = f"rmsd {atoms1} toAtoms {atoms2}"
+    command = f"rmsd {atoms1} to {atoms2}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"RMSD between {atoms1} and {atoms2}")
 
@@ -1882,8 +1886,14 @@ async def apply_preset(
     """Apply a built-in visualization preset.
 
     Args:
-        preset_name: Preset name (e.g., 'interactive', 'publication', 'initial styles',
-                     'sticks', 'cylinders', 'licorice', 'ball-and-stick', 'space-filling')
+        preset_name: Preset name. Common presets:
+            'initial styles' - default representation
+            'publication 1 (silhouettes)' - publication with edge outlines
+            'publication 2 (depth-cued)' - publication with depth fog
+            'interactive 1 (ribbons)' - interactive ribbon view
+            'interactive 2 (sticks)' - interactive stick view
+            'sticks', 'cylinders', 'licorice', 'ball-and-stick', 'space-filling'
+            Note: use full names to avoid ambiguity (e.g., 'publication 1' not 'publication')
         session_id: ChimeraX session port (defaults to primary session)
     """
     command = f'preset "{preset_name}"'
@@ -3045,14 +3055,17 @@ async def get_coordinates(
     target: str,
     session_id: Optional[int] = None,
 ) -> str:
-    """Get XYZ coordinates for atoms.
+    """Get XYZ coordinates for atoms (as centroid position).
+
+    Note: Uses 'define centroid' internally because the 'getcrd' command
+    returns numpy arrays that crash the REST JSON serializer.
 
     Args:
         target: Atomspec for atoms to get coordinates of (e.g., '#1/A:100@CA')
         session_id: ChimeraX session port (defaults to primary session)
     """
     target = validate_atomspec(target)
-    command = f"getcrd {target}"
+    command = f"define centroid {target}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Coordinates for {target}")
 

@@ -1,5 +1,7 @@
 # ChimeraX MCP Server
 
+![ChimeraX MCP Preview](assets/preview.png)
+
 A standalone [Model Context Protocol](https://modelcontextprotocol.io) (MCP) server that connects AI coding assistants to [UCSF ChimeraX](https://www.cgl.ucsf.edu/chimerax/) for molecular visualization and structural biology workflows.
 
 ## About

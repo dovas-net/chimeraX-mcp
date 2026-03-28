@@ -9,7 +9,7 @@ ChimeraX MCP bridges the gap between conversational AI and molecular visualizati
 The server handles everything automatically: discovering or launching ChimeraX instances, managing sessions across multiple ports, formatting results, and providing contextual error hints when something goes wrong.
 
 **Key capabilities:**
-- **48 specialized tools** covering the full structural biology workflow
+- **98 specialized tools** covering the full structural biology workflow
 - **Auto-launch** — ChimeraX starts automatically when needed, no manual setup
 - **Multi-session** — work with multiple ChimeraX instances simultaneously
 - **Input validation** — atomspec validation and error hints for common mistakes
@@ -55,7 +55,7 @@ That's it. ChimeraX will auto-launch with REST enabled when you first use a tool
 | `CHIMERAX_TIMEOUT` | `60` | Default command timeout (seconds) |
 | `CHIMERAX_DEBUG` | `false` | Enable debug logging (`1`, `true`, or `yes`) |
 
-## Available Tools (48)
+## Available Tools (98)
 
 ### Core (2)
 
@@ -74,17 +74,31 @@ That's it. ChimeraX will auto-launch with REST enabled when you first use a tool
 | `get_model_info` | Detailed model information including chains, atoms, bonds |
 | `get_chain_info` | Chain-level details with sequence and residue info |
 
-### Visualization (5)
+### Display & Styling (8)
 
 | Tool | Description |
 |------|-------------|
 | `show_hide_objects` | Control visibility of atoms, bonds, cartoons, surfaces, models |
 | `color_models` | Color structures and selections by any ChimeraX color |
+| `set_style` | Change atomic display style (stick, ball-and-stick, sphere) |
+| `set_cartoon` | Control cartoon/ribbon display and style (rounded, edged, piping) |
+| `set_size` | Change display sizes for atoms, sticks, and balls |
+| `set_transparency` | Set transparency on surfaces, cartoons, or atoms |
 | `get_shown` | Query current visibility state of all models |
-| `save_image` | Save publication-quality screenshots (configurable resolution, transparency) |
-| `set_scene` | Configure background color, lighting, silhouettes, camera mode |
+| `apply_preset` | Apply built-in visualization presets (publication, interactive, etc.) |
 
-### Analysis (11)
+### Camera & View (6)
+
+| Tool | Description |
+|------|-------------|
+| `set_scene` | Configure background color, lighting, silhouettes, camera mode |
+| `set_camera` | Control camera mode (mono, orthographic, stereo, 360) and FOV |
+| `set_lighting` | Control lighting environment and shadows |
+| `set_clipping` | Slice through structures with near/far/slab clipping planes |
+| `zoom_view` | Zoom in/out by factor or exact pixel size |
+| `view_residue` | Center view and rotation on a specific residue |
+
+### Analysis & Measurement (13)
 
 | Tool | Description |
 |------|-------------|
@@ -94,74 +108,140 @@ That's it. ChimeraX will auto-launch with REST enabled when you first use a tool
 | `measure_sasa` | Calculate solvent-accessible surface area |
 | `measure_center` | Calculate geometric center of a selection |
 | `measure_buried_area` | Buried surface area between two groups of atoms |
+| `calculate_rmsd` | Calculate RMSD between two sets of atoms |
 | `find_hbonds` | Hydrogen bond detection and analysis |
 | `find_clashes` | Steric clash detection with configurable overlap cutoff |
+| `find_cavities` | Detect binding pockets and cavities (KVFinder) |
+| `show_contacts` | Find and display protein-protein interfaces |
 | `align_structures` | Structural alignment via matchmaker (reports RMSD) |
-| `view_residue` | Center view and rotation on a specific residue |
-| `predict_structure` | AlphaFold or ESMFold structure prediction from sequence |
+| `define_axis_plane` | Define geometric axis, plane, or centroid for atoms |
 
-### Selection (2)
+### Selection (3)
 
 | Tool | Description |
 |------|-------------|
 | `select_atoms` | Select atoms/residues/chains with set, add, subtract, or clear modes |
 | `select_zone` | Select everything within a distance of a target (zone selection) |
+| `name_selection` | Create named selections for reuse in other commands |
 
-### Labels & Annotations (2)
+### Labels & Annotations (4)
 
 | Tool | Description |
 |------|-------------|
 | `label_atoms` | Add/remove 3D text labels on atoms or residues |
 | `label_2d` | Add 2D text overlays on the viewport (titles, annotations) |
+| `add_scalebar` | Add/remove distance scale bar for publication figures |
+| `color_key` | Add/remove color key (legend) for coloring schemes |
 
-### Surfaces (3)
+### Surfaces & Volumes (7)
 
 | Tool | Description |
 |------|-------------|
 | `create_surface` | Generate molecular surfaces (solid, mesh, or dot styles) |
-| `color_surface` | Color surfaces by electrostatics (coulombic), hydrophobicity (mlp), or B-factor |
-| `set_transparency` | Set transparency on surfaces, cartoons, or atoms |
+| `color_surface` | Color surfaces by electrostatics, hydrophobicity, or B-factor |
+| `set_volume_display` | Control density map contour level, style, step, and color |
+| `atoms_to_map` | Generate simulated density map from atomic coordinates |
+| `fit_in_map` | Fit an atomic model into an electron density map |
+| `measure_surface_area` | Measure area of a molecular surface |
+| `measure_map_stats` | Get density map statistics (mean, RMS, min, max) |
 
-### Sequence (2)
+### Sequence & Search (4)
 
 | Tool | Description |
 |------|-------------|
 | `get_sequence` | Get chain sequence in FASTA format |
 | `blast_search` | Run BLAST sequence search against PDB or other databases |
+| `foldseek_search` | Find structurally similar proteins via Foldseek |
+| `similar_structures` | Find similar PDB entries via Similar Structures tool |
 
-### Structure Editing (3)
+### Structure Editing (10)
 
 | Tool | Description |
 |------|-------------|
 | `swap_residue` | Mutate a residue to a different amino acid |
+| `swap_nucleic_acid` | Mutate a nucleic acid residue to a different base |
 | `add_hydrogens` | Add hydrogen atoms to a structure |
+| `add_charges` | Add partial charges (for electrostatics) |
 | `minimize_structure` | Energy minimize a structure (configurable steps, 5-min timeout) |
+| `delete_atoms` | Delete atoms, residues, or solvent from a model |
+| `manage_bonds` | Add or remove bonds between atoms |
+| `change_chain_ids` | Change chain ID(s) for a selection |
+| `renumber_residues` | Renumber residues starting from a given number |
+| `build_structure` | Build atoms, peptides, or nucleic acids from scratch |
 
-### Volume & Maps (3)
+### Model Operations (5)
 
 | Tool | Description |
 |------|-------------|
-| `fit_in_map` | Fit an atomic model into an electron density map |
-| `measure_surface_area` | Measure area of a molecular surface |
-| `measure_map_stats` | Get density map statistics (mean, RMS, min, max) |
+| `split_model` | Split a model into sub-models by chains, ligands, etc. |
+| `combine_models` | Merge multiple models into one |
+| `copy_model` | Create a copy of a model |
+| `rename_model` | Rename a model |
+| `tile_models` | Arrange models side-by-side in a grid layout |
 
-### Session Management (6)
+### Prediction & Structure Search (2)
+
+| Tool | Description |
+|------|-------------|
+| `predict_structure` | AlphaFold or ESMFold structure prediction from sequence |
+| `prep_for_docking` | Prepare structure for docking (adds H, charges, repairs) |
+
+### Symmetry & Crystallography (2)
+
+| Tool | Description |
+|------|-------------|
+| `show_symmetry` | Show biological assembly or crystallographic symmetry copies |
+| `show_crystal_contacts` | Show crystal packing contacts and neighbors |
+
+### Animation & Movies (3)
+
+| Tool | Description |
+|------|-------------|
+| `rotate_view` | Rotate or rock the view around an axis |
+| `move_model` | Translate models or camera along an axis |
+| `record_movie` | Record, stop, and encode movies (H.264, VP8, GIF, APNG) |
+
+### Scene & Session Management (10)
 
 | Tool | Description |
 |------|-------------|
 | `save_session` | Save current session to a .cxs file |
 | `open_session` | Restore a previously saved session |
+| `manage_scenes` | Save, restore, list, or delete named viewpoints |
 | `get_session_info` | Full session overview (models, visibility, status) |
 | `list_chimerax_instances` | List all running ChimeraX instances |
 | `start_new_chimerax_session` | Launch a new ChimeraX instance |
 | `check_chimerax_status` | Health check on a specific session |
 | `set_default_session` | Change which session receives commands by default |
+| `set_window_size` | Set the viewport window dimensions |
+| `save_image` | Save publication-quality screenshots |
 
-### Undo (1)
+### Rendering & Materials (2)
 
 | Tool | Description |
 |------|-------------|
-| `undo_redo` | Undo or redo recent actions (configurable step count) |
+| `set_material` | Control surface reflectivity and shininess |
+| `add_shape` | Add geometric shapes (sphere, cylinder, arrow) to the scene |
+
+### Specialized (7)
+
+| Tool | Description |
+|------|-------------|
+| `show_nucleotides` | Display RNA/DNA base representations (ladder, slab, tube) |
+| `assign_secondary_structure` | Recalculate secondary structure (DSSP) |
+| `morph_structures` | Animate between structural conformations |
+| `coordset` | Navigate NMR ensembles and MD trajectories |
+| `altlocs` | Show or change alternate conformations |
+| `set_attribute` | Set custom attributes on atoms/residues/models |
+| `show_crosslinks` | Visualize crosslinking mass spectrometry data |
+
+### Markers & 3D Printing (3)
+
+| Tool | Description |
+|------|-------------|
+| `add_marker` | Place 3D markers/spheres at specific coordinates |
+| `struts` | Add/remove struts for 3D printing support |
+| `undo_redo` | Undo or redo recent actions |
 
 ### Documentation (2)
 
@@ -183,15 +263,21 @@ Once configured, just ask Claude naturally:
 
 "Create a surface for the protein and color it by electrostatic potential"
 
-"Select everything within 5 Angstroms of the ligand"
-
-"Add a label to the active site residues"
+"Select everything within 5 Angstroms of the ligand and label those residues"
 
 "Save a publication-quality image with white background at 4K resolution"
 
+"Record a 360-degree rotation movie of the structure"
+
+"Find proteins with similar structure using Foldseek"
+
+"Show the biological assembly for this crystal structure"
+
+"Prepare this structure for docking"
+
 "Predict the structure of this sequence: MKTLLILAVL..."
 
-"Save this session so I can come back to it later"
+"Split the model by chains and tile them side-by-side"
 ```
 
 ## Development
@@ -201,7 +287,7 @@ Once configured, just ask Claude naturally:
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-# Run tests (119 tests)
+# Run tests (189 tests)
 .venv/bin/pytest tests/ -v
 
 # Enable debug logging
@@ -212,7 +298,7 @@ CHIMERAX_DEBUG=true .venv/bin/python -m chimerax_mcp
 
 | Module | Role |
 |--------|------|
-| `server.py` | FastMCP instance, all 48 tool definitions, entry point |
+| `server.py` | FastMCP instance, all 98 tool definitions, entry point |
 | `chimera_rest.py` | REST client, auto-launch, instance discovery, session management |
 | `formatting.py` | Response formatting, error hints, input validation |
 | `docs.py` | Atomspec guide, ChimeraX command documentation (HTML to markdown) |

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chimerax-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "MCP server for UCSF ChimeraX molecular visualization"
 readme = "README.md"
 license = "MIT"

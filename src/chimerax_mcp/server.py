@@ -1508,3 +1508,1338 @@ async def undo_redo(
     command = f"{action} {count}" if count > 1 else action
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"{action.capitalize()} ({count} step{'s' if count > 1 else ''})")
+
+
+# ===========================================================================
+# TIER 1 — High Impact
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Tool 49: set_style
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def set_style(
+    target: str = "all",
+    style: str = "stick",
+    session_id: Optional[int] = None,
+) -> str:
+    """Change the atomic display style (ball-and-stick, sphere, stick).
+
+    Args:
+        target: Atomspec to restyle (e.g., '#1', 'ligand', '#1/A')
+        style: Display style - 'stick', 'ball' (ball-and-stick), 'sphere' (space-filling)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if style not in ("stick", "ball", "sphere"):
+        raise ValueError(f"Style must be 'stick', 'ball', or 'sphere', got '{style}'")
+    command = f"style {target} {style}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Set style of {target} to {style}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 50: set_cartoon
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def set_cartoon(
+    target: str = "all",
+    style: str = "",
+    hide_backbone: bool = True,
+    session_id: Optional[int] = None,
+) -> str:
+    """Control cartoon/ribbon display and style.
+
+    Args:
+        target: Atomspec for the cartoon (e.g., '#1', '#1/A')
+        style: Ribbon style - 'rounded', 'edged', 'piping', 'plain', or '' for default
+        hide_backbone: Hide backbone atoms when showing cartoon (default: True)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"cartoon {target}"
+    if style:
+        if style not in ("rounded", "edged", "piping", "plain"):
+            raise ValueError(f"Style must be 'rounded', 'edged', 'piping', or 'plain'")
+        command += f" style {style}"
+    if hide_backbone:
+        command += " suppress true"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Cartoon set for {target}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 51: set_clipping
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def set_clipping(
+    plane: str = "near",
+    offset: float = 0.0,
+    enable: bool = True,
+    session_id: Optional[int] = None,
+) -> str:
+    """Control view clipping planes to slice through structures.
+
+    Args:
+        plane: Which plane - 'near', 'far', 'front', 'back', 'slab'
+        offset: Distance offset in Angstroms (positive = further from camera)
+        enable: Enable (True) or disable (False) the clipping plane
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if not enable:
+        command = f"clip off {plane}"
+    elif offset != 0:
+        command = f"clip {plane} {offset}"
+    else:
+        command = f"clip {plane}"
+    result = await run_chimerax_command(command, session_id)
+    action = "Disabled" if not enable else "Set"
+    return format_chimerax_response(result, f"{action} {plane} clipping plane")
+
+
+# ---------------------------------------------------------------------------
+# Tool 52: calculate_rmsd
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def calculate_rmsd(
+    atoms1: str,
+    atoms2: str,
+    session_id: Optional[int] = None,
+) -> str:
+    """Calculate RMSD between two sets of atoms.
+
+    Args:
+        atoms1: First atomspec (e.g., '#1/A')
+        atoms2: Second atomspec (e.g., '#2/A')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    atoms1, atoms2 = validate_atomspec(atoms1), validate_atomspec(atoms2)
+    command = f"rmsd {atoms1} toAtoms {atoms2}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"RMSD between {atoms1} and {atoms2}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 53: set_volume_display
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def set_volume_display(
+    map_model: str,
+    level: float = 0.0,
+    style: str = "",
+    step: int = 0,
+    color: str = "",
+    session_id: Optional[int] = None,
+) -> str:
+    """Control density map display — contour level, style, step size, color.
+
+    Args:
+        map_model: Volume model spec (e.g., '#2')
+        level: Contour level (0 = use current)
+        style: Display style - 'surface', 'mesh', 'solid', or '' for current
+        step: Step size for display (higher = faster but coarser; 0 = auto)
+        color: Volume color (e.g., 'blue', '#80808080' for semi-transparent gray)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    map_model = validate_atomspec(map_model)
+    command = f"volume {map_model}"
+    if level != 0:
+        command += f" level {level}"
+    if style:
+        if style not in ("surface", "mesh", "solid"):
+            raise ValueError(f"Style must be 'surface', 'mesh', or 'solid'")
+        command += f" style {style}"
+    if step > 0:
+        command += f" step {step}"
+    if color:
+        command += f" color {color}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Volume display updated for {map_model}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 54: atoms_to_map
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def atoms_to_map(
+    target: str,
+    resolution: float = 5.0,
+    grid_spacing: float = 0.0,
+    session_id: Optional[int] = None,
+) -> str:
+    """Generate a simulated density map from atomic coordinates.
+
+    Args:
+        target: Atomspec for atoms to convert (e.g., '#1')
+        resolution: Map resolution in Angstroms (default: 5.0)
+        grid_spacing: Grid spacing in Angstroms (0 = auto, typically resolution/3)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    target = validate_atomspec(target)
+    command = f"molmap {target} {resolution}"
+    if grid_spacing > 0:
+        command += f" gridSpacing {grid_spacing}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Simulated map from {target} at {resolution}A resolution")
+
+
+# ---------------------------------------------------------------------------
+# Tool 55: show_contacts
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def show_contacts(
+    target: str = "all",
+    both: bool = True,
+    session_id: Optional[int] = None,
+) -> str:
+    """Find and display protein-protein or molecular interfaces.
+
+    Args:
+        target: Atomspec for the model(s) to analyze (e.g., '#1')
+        both: Show contacts from both sides of the interface (default: True)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"interfaces {target}"
+    if both:
+        command += " bothSides true"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Interfaces for {target}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 56: show_nucleotides
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def show_nucleotides(
+    target: str = "all",
+    style: str = "ladder",
+    session_id: Optional[int] = None,
+) -> str:
+    """Display nucleic acid (RNA/DNA) base representations.
+
+    Args:
+        target: Atomspec for nucleic acid (e.g., '#1')
+        style: Display style - 'ladder', 'slab', 'tube', 'stubs', 'fill'
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if style not in ("ladder", "slab", "tube", "stubs", "fill"):
+        raise ValueError(f"Style must be 'ladder', 'slab', 'tube', 'stubs', or 'fill'")
+    command = f"nucleotides {target} {style}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Nucleotide display for {target} ({style})")
+
+
+# ===========================================================================
+# TIER 2 — Publication & Animation
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Tool 57: rotate_view
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def rotate_view(
+    axis: str = "y",
+    angle: float = 90.0,
+    frames: int = 0,
+    rock: bool = False,
+    session_id: Optional[int] = None,
+) -> str:
+    """Rotate the view around an axis, optionally animated.
+
+    Args:
+        axis: Rotation axis - 'x', 'y', 'z' (default: 'y')
+        angle: Rotation angle in degrees (default: 90)
+        frames: Number of animation frames (0 = instant)
+        rock: If True, rock back and forth instead of one-way turn
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if rock:
+        command = f"rock {axis} {angle}"
+        if frames > 0:
+            command += f" {frames}"
+    else:
+        command = f"turn {axis} {angle}"
+        if frames > 0:
+            command += f" {frames}"
+    result = await run_chimerax_command(command, session_id)
+    action = "Rocking" if rock else "Rotated"
+    return format_chimerax_response(result, f"{action} view {angle} degrees around {axis}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 58: zoom_view
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def zoom_view(
+    factor: float = 1.5,
+    frames: int = 0,
+    pixel_size: float = 0.0,
+    session_id: Optional[int] = None,
+) -> str:
+    """Zoom the camera in or out.
+
+    Args:
+        factor: Zoom factor (>1 = zoom in, <1 = zoom out, e.g., 2.0 = 2x closer)
+        frames: Number of animation frames (0 = instant)
+        pixel_size: Set exact pixel size in Angstroms (overrides factor; 0 = use factor)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if pixel_size > 0:
+        command = f"zoom pixelSize {pixel_size}"
+    else:
+        command = f"zoom {factor}"
+    if frames > 0:
+        command += f" {frames}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Zoomed by factor {factor}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 59: record_movie
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def record_movie(
+    action: str = "record",
+    filename: str = "",
+    framerate: int = 25,
+    format: str = "h264",
+    session_id: Optional[int] = None,
+) -> str:
+    """Record or encode a movie of the ChimeraX viewport.
+
+    Workflow: record → (perform actions / animations) → encode
+
+    Args:
+        action: 'record' (start recording), 'stop' (stop recording), 'encode' (save movie)
+        filename: Output filename (for encode action, e.g., 'movie.mp4')
+        framerate: Frames per second for encoding (default: 25)
+        format: Video format for encoding - 'h264', 'vp8', 'apng', 'gif' (default: 'h264')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if action == "record":
+        command = "movie record"
+    elif action == "stop":
+        command = "movie stop"
+    elif action == "encode":
+        if not filename:
+            filename = "/tmp/chimerax_movie.mp4"
+        command = f"movie encode {filename} framerate {framerate} format {format}"
+    else:
+        raise ValueError(f"Action must be 'record', 'stop', or 'encode', got '{action}'")
+    result = await run_chimerax_command(command, session_id, timeout=300)
+    return format_chimerax_response(result, f"Movie {action}: {filename or 'started'}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 60: manage_scenes
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def manage_scenes(
+    action: str = "list",
+    name: str = "",
+    session_id: Optional[int] = None,
+) -> str:
+    """Save, restore, or list named viewpoints (scenes).
+
+    Args:
+        action: 'save' (save current view), 'restore' (go to saved view), 'list', 'delete'
+        name: Scene name (required for save, restore, delete)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if action == "list":
+        command = "scenes list"
+    elif action in ("save", "restore", "delete"):
+        if not name:
+            raise ValueError(f"Scene name required for '{action}'")
+        command = f"scenes {action} {name}"
+    else:
+        raise ValueError(f"Action must be 'save', 'restore', 'list', or 'delete'")
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Scenes {action}: {name or 'all'}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 61: apply_preset
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def apply_preset(
+    preset_name: str,
+    session_id: Optional[int] = None,
+) -> str:
+    """Apply a built-in visualization preset.
+
+    Args:
+        preset_name: Preset name (e.g., 'interactive', 'publication', 'initial styles',
+                     'sticks', 'cylinders', 'licorice', 'ball-and-stick', 'space-filling')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f'preset "{preset_name}"'
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Applied preset: {preset_name}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 62: add_scalebar
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def add_scalebar(
+    length: float = 0.0,
+    color: str = "white",
+    thickness: float = 3.0,
+    show: bool = True,
+    session_id: Optional[int] = None,
+) -> str:
+    """Add or remove a distance scale bar on the image.
+
+    Args:
+        length: Scale bar length in Angstroms (0 = auto)
+        color: Scale bar color (default: 'white')
+        thickness: Line thickness in pixels (default: 3.0)
+        show: Show (True) or hide (False) the scale bar
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if not show:
+        command = "scalebar delete"
+    else:
+        command = f"scalebar color {color} thickness {thickness}"
+        if length > 0:
+            command += f" length {length}"
+    result = await run_chimerax_command(command, session_id)
+    action = "Removed" if not show else "Added"
+    return format_chimerax_response(result, f"{action} scale bar")
+
+
+# ---------------------------------------------------------------------------
+# Tool 63: add_marker
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def add_marker(
+    x: float,
+    y: float,
+    z: float,
+    color: str = "yellow",
+    radius: float = 1.0,
+    session_id: Optional[int] = None,
+) -> str:
+    """Place a 3D marker/sphere at a specific coordinate.
+
+    Args:
+        x: X coordinate in Angstroms
+        y: Y coordinate in Angstroms
+        z: Z coordinate in Angstroms
+        color: Marker color (default: 'yellow')
+        radius: Marker radius in Angstroms (default: 1.0)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"marker position {x},{y},{z} color {color} radius {radius}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Marker placed at ({x}, {y}, {z})")
+
+
+# ---------------------------------------------------------------------------
+# Tool 64: add_shape
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def add_shape(
+    shape_type: str = "sphere",
+    center: str = "0,0,0",
+    radius: float = 5.0,
+    color: str = "gray",
+    session_id: Optional[int] = None,
+) -> str:
+    """Add a geometric shape (sphere, cylinder, arrow) to the scene.
+
+    Args:
+        shape_type: Shape - 'sphere', 'cylinder', 'arrow', 'tube', 'rectangle'
+        center: Center position as 'x,y,z' (default: '0,0,0')
+        radius: Shape radius in Angstroms (default: 5.0)
+        color: Shape color (default: 'gray')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if shape_type not in ("sphere", "cylinder", "arrow", "tube", "rectangle"):
+        raise ValueError(f"Shape must be 'sphere', 'cylinder', 'arrow', 'tube', or 'rectangle'")
+    command = f"shape {shape_type} center {center} radius {radius} color {color}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Added {shape_type} at {center}")
+
+
+# ===========================================================================
+# TIER 3 — Specialized Workflows
+# ===========================================================================
+
+
+# ---------------------------------------------------------------------------
+# Tool 65: prep_for_docking
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def prep_for_docking(
+    target: str = "all",
+    session_id: Optional[int] = None,
+) -> str:
+    """Prepare a structure for docking (adds hydrogens, charges, repairs).
+
+    Args:
+        target: Atomspec for the model to prepare (e.g., '#1')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"dockprep {target}"
+    result = await run_chimerax_command(command, session_id, timeout=120)
+    return format_chimerax_response(result, f"Docking prep completed for {target}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 66: assign_secondary_structure
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def assign_secondary_structure(
+    target: str = "all",
+    session_id: Optional[int] = None,
+) -> str:
+    """Calculate and assign secondary structure (helix/sheet/coil) using DSSP algorithm.
+
+    Args:
+        target: Atomspec for the model (e.g., '#1')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"dssp {target}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Secondary structure assigned for {target}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 67: find_cavities
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def find_cavities(
+    target: str = "all",
+    session_id: Optional[int] = None,
+) -> str:
+    """Detect binding pockets and cavities in a structure using KVFinder.
+
+    Args:
+        target: Atomspec for the model (e.g., '#1')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"kvfinder {target}"
+    result = await run_chimerax_command(command, session_id, timeout=120)
+    return format_chimerax_response(result, f"Cavities detected in {target}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 68: morph_structures
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def morph_structures(
+    models: str,
+    frames: int = 20,
+    session_id: Optional[int] = None,
+) -> str:
+    """Create a morph animation between conformations.
+
+    Args:
+        models: Atomspec for models to morph between (e.g., '#1-3')
+        frames: Number of interpolation frames between each pair (default: 20)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"morph {models} frames {frames}"
+    result = await run_chimerax_command(command, session_id, timeout=120)
+    return format_chimerax_response(result, f"Morph created for {models}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 69: split_model
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def split_model(
+    model: str,
+    by: str = "chains",
+    session_id: Optional[int] = None,
+) -> str:
+    """Split a model into separate sub-models.
+
+    Args:
+        model: Model spec to split (e.g., '#1')
+        by: How to split - 'chains', 'ligands', 'connected', 'atoms'
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    model = validate_atomspec(model)
+    command = f"split {model}"
+    if by == "chains":
+        pass  # default behavior
+    elif by in ("ligands", "connected", "atoms"):
+        command += f" {by}"
+    else:
+        raise ValueError(f"'by' must be 'chains', 'ligands', 'connected', or 'atoms'")
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Split {model} by {by}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 70: combine_models
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def combine_models(
+    models: str,
+    name: str = "",
+    close_originals: bool = False,
+    session_id: Optional[int] = None,
+) -> str:
+    """Merge multiple models into a single model.
+
+    Args:
+        models: Models to combine (e.g., '#1,2' or '#1-3')
+        name: Name for the combined model (optional)
+        close_originals: Close the original models after combining (default: False)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"combine {models}"
+    if name:
+        command += f" name {name}"
+    if close_originals:
+        command += " close true"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Combined models {models}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 71: set_attribute
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def set_attribute(
+    target: str,
+    attribute: str,
+    value: str,
+    attr_type: str = "atoms",
+    session_id: Optional[int] = None,
+) -> str:
+    """Set a custom attribute on atoms, residues, or models (for custom coloring, etc.).
+
+    Args:
+        target: Atomspec to set attribute on (e.g., '#1/A:100-200')
+        attribute: Attribute name (e.g., 'binding_score')
+        value: Attribute value (number or string)
+        attr_type: Level - 'atoms', 'residues', 'models'
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    target = validate_atomspec(target)
+    if attr_type not in ("atoms", "residues", "models"):
+        raise ValueError(f"attr_type must be 'atoms', 'residues', or 'models'")
+    command = f"setattr {target} {attr_type} {attribute} {value}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Set {attribute}={value} on {target}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 72: show_crosslinks
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def show_crosslinks(
+    filename: str,
+    color: str = "dodgerblue",
+    radius: float = 0.5,
+    session_id: Optional[int] = None,
+) -> str:
+    """Visualize crosslinking mass spectrometry data.
+
+    Args:
+        filename: Path to crosslinks file (CSV or pseudobond format)
+        color: Crosslink color (default: 'dodgerblue')
+        radius: Pseudobond radius (default: 0.5)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"crosslinks {filename} color {color} radius {radius}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Crosslinks loaded from {filename}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 73: show_crystal_contacts
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def show_crystal_contacts(
+    model: str = "#1",
+    distance: float = 3.0,
+    session_id: Optional[int] = None,
+) -> str:
+    """Show crystal packing contacts and symmetry-related neighbors.
+
+    Args:
+        model: Model spec (e.g., '#1')
+        distance: Contact distance threshold in Angstroms (default: 3.0)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    model = validate_atomspec(model)
+    command = f"crystalcontacts {model} distance {distance}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Crystal contacts for {model}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 74: build_structure
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def build_structure(
+    structure_type: str,
+    value: str,
+    session_id: Optional[int] = None,
+) -> str:
+    """Build atoms, fragments, or peptides from scratch.
+
+    Args:
+        structure_type: What to build - 'atom' (single atom), 'peptide' (from sequence),
+                       'nucleic' (from sequence)
+        value: For 'atom': element symbol. For 'peptide'/'nucleic': sequence string.
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if structure_type == "atom":
+        command = f"build start atom {value}"
+    elif structure_type == "peptide":
+        command = f"build start peptide {value}"
+    elif structure_type == "nucleic":
+        command = f"build start nucleic {value}"
+    else:
+        raise ValueError(f"type must be 'atom', 'peptide', or 'nucleic'")
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Built {structure_type}: {value[:30]}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 75: show_symmetry
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def show_symmetry(
+    model: str = "#1",
+    sym_type: str = "assembly",
+    assembly_id: str = "1",
+    session_id: Optional[int] = None,
+) -> str:
+    """Show biological assembly or crystallographic symmetry copies.
+
+    Args:
+        model: Model spec (e.g., '#1')
+        sym_type: Symmetry type - 'assembly' (biological unit), 'unitcell', 'contacts'
+        assembly_id: Assembly ID for biological units (default: '1')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    model = validate_atomspec(model)
+    if sym_type == "assembly":
+        command = f"sym {model} assembly {assembly_id}"
+    elif sym_type == "unitcell":
+        command = f"unitcell {model}"
+    elif sym_type == "contacts":
+        command = f"sym {model} contacts true"
+    else:
+        raise ValueError(f"sym_type must be 'assembly', 'unitcell', or 'contacts'")
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Symmetry shown for {model} ({sym_type})")
+
+
+# ---------------------------------------------------------------------------
+# Tool 76: add_charges
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def add_charges(
+    target: str = "all",
+    method: str = "am1-bcc",
+    session_id: Optional[int] = None,
+) -> str:
+    """Add partial charges to atoms (required for electrostatic calculations).
+
+    Args:
+        target: Atomspec to charge (e.g., '#1')
+        method: Charge method - 'am1-bcc' (default for small molecules), 'gasteiger'
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"addcharge {target} method {method}"
+    result = await run_chimerax_command(command, session_id, timeout=120)
+    return format_chimerax_response(result, f"Charges added to {target} ({method})")
+
+
+# ---------------------------------------------------------------------------
+# Tool 77: rename_model
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def rename_model(
+    model: str,
+    new_name: str,
+    session_id: Optional[int] = None,
+) -> str:
+    """Rename a model.
+
+    Args:
+        model: Model spec to rename (e.g., '#1')
+        new_name: New name for the model
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    model = validate_atomspec(model)
+    command = f'rename {model} "{new_name}"'
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Renamed {model} to '{new_name}'")
+
+
+# ---------------------------------------------------------------------------
+# Tool 78: change_chain_ids
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def change_chain_ids(
+    target: str,
+    new_id: str,
+    session_id: Optional[int] = None,
+) -> str:
+    """Change chain ID(s) for a selection.
+
+    Args:
+        target: Atomspec of the chain(s) to rename (e.g., '#1/A')
+        new_id: New chain ID (e.g., 'B')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    target = validate_atomspec(target)
+    command = f"changechains {target} {new_id}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Changed chain ID of {target} to {new_id}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 79: renumber_residues
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def renumber_residues(
+    target: str,
+    start: int = 1,
+    session_id: Optional[int] = None,
+) -> str:
+    """Renumber residues starting from a given number.
+
+    Args:
+        target: Atomspec of residues to renumber (e.g., '#1/A')
+        start: Starting residue number (default: 1)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    target = validate_atomspec(target)
+    command = f"renumber {target} start {start}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Renumbered {target} starting from {start}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 80: delete_atoms
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def delete_atoms(
+    target: str,
+    session_id: Optional[int] = None,
+) -> str:
+    """Delete atoms, residues, or bonds from a model.
+
+    Args:
+        target: Atomspec of atoms to delete (e.g., '#1/A:100', 'solvent')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    target = validate_atomspec(target)
+    command = f"delete {target}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Deleted {target}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 81: manage_bonds
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def manage_bonds(
+    action: str,
+    target: str,
+    session_id: Optional[int] = None,
+) -> str:
+    """Add or remove bonds between atoms.
+
+    Args:
+        action: 'add' or 'delete'
+        target: Atomspec for the bond atoms (e.g., '#1/A:100@CA #1/A:200@CA')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    target = validate_atomspec(target)
+    if action == "add":
+        command = f"bond {target}"
+    elif action == "delete":
+        command = f"~bond {target}"
+    else:
+        raise ValueError(f"Action must be 'add' or 'delete'")
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Bond {action}: {target}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 82: define_axis_plane
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def define_axis_plane(
+    what: str = "axis",
+    target: str = "all",
+    session_id: Optional[int] = None,
+) -> str:
+    """Define an axis, plane, or centroid for a set of atoms.
+
+    Args:
+        what: 'axis', 'plane', or 'centroid'
+        target: Atomspec to compute over (e.g., '#1/A')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if what not in ("axis", "plane", "centroid"):
+        raise ValueError(f"'what' must be 'axis', 'plane', or 'centroid'")
+    target = validate_atomspec(target)
+    command = f"define {what} {target}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Defined {what} for {target}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 83: set_lighting
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def set_lighting(
+    preset: str = "default",
+    shadows: bool = False,
+    session_id: Optional[int] = None,
+) -> str:
+    """Control the lighting environment.
+
+    Args:
+        preset: Lighting preset - 'default', 'simple', 'soft', 'full', 'flat'
+        shadows: Enable shadow rendering (default: False)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if preset not in ("default", "simple", "soft", "full", "flat"):
+        raise ValueError(f"Preset must be 'default', 'simple', 'soft', 'full', or 'flat'")
+    command = f"lighting {preset}"
+    if shadows:
+        command += " shadows true"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Lighting set to {preset}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 84: set_camera
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def set_camera(
+    mode: str = "mono",
+    field_of_view: float = 0.0,
+    session_id: Optional[int] = None,
+) -> str:
+    """Control the camera mode and field of view.
+
+    Args:
+        mode: Camera mode - 'mono' (default), 'ortho' (orthographic), 'stereo', '360'
+        field_of_view: Horizontal field of view in degrees (0 = keep current)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if mode not in ("mono", "ortho", "stereo", "360", "sbs"):
+        raise ValueError(f"Mode must be 'mono', 'ortho', 'stereo', '360', or 'sbs'")
+    command = f"camera {mode}"
+    if field_of_view > 0:
+        command += f" fieldOfView {field_of_view}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Camera set to {mode}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 85: set_window_size
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def set_window_size(
+    width: int,
+    height: int,
+    session_id: Optional[int] = None,
+) -> str:
+    """Set the ChimeraX viewport window size.
+
+    Args:
+        width: Width in pixels
+        height: Height in pixels
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"windowsize {width} {height}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Window resized to {width}x{height}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 86: tile_models
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def tile_models(
+    models: str = "all",
+    columns: int = 0,
+    spacing_factor: float = 0.0,
+    session_id: Optional[int] = None,
+) -> str:
+    """Arrange models side-by-side in a grid layout.
+
+    Args:
+        models: Models to tile (e.g., '#1-4' or 'all')
+        columns: Number of columns (0 = auto)
+        spacing_factor: Spacing between models as fraction of size (0 = auto)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"tile {models}"
+    if columns > 0:
+        command += f" columns {columns}"
+    if spacing_factor > 0:
+        command += f" spacingFactor {spacing_factor}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Tiled models: {models}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 87: copy_model
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def copy_model(
+    model: str,
+    session_id: Optional[int] = None,
+) -> str:
+    """Create a copy of a model.
+
+    Args:
+        model: Model spec to copy (e.g., '#1')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    model = validate_atomspec(model)
+    command = f"mcopy {model}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Copied model {model}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 88: set_size
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def set_size(
+    target: str = "all",
+    atom_radius: float = 0.0,
+    stick_radius: float = 0.0,
+    ball_scale: float = 0.0,
+    session_id: Optional[int] = None,
+) -> str:
+    """Change the display size of atoms, sticks, or balls.
+
+    Args:
+        target: Atomspec to resize (e.g., '#1', 'ligand')
+        atom_radius: Atom sphere radius in Angstroms (0 = no change)
+        stick_radius: Stick bond radius (0 = no change)
+        ball_scale: Ball-and-stick scale factor (0 = no change)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"size {target}"
+    if atom_radius > 0:
+        command += f" atomRadius {atom_radius}"
+    if stick_radius > 0:
+        command += f" stickRadius {stick_radius}"
+    if ball_scale > 0:
+        command += f" ballScale {ball_scale}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Resized {target}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 89: move_model
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def move_model(
+    axis: str = "x",
+    distance: float = 10.0,
+    models: str = "",
+    frames: int = 0,
+    session_id: Optional[int] = None,
+) -> str:
+    """Translate models or the camera along an axis.
+
+    Args:
+        axis: Translation axis - 'x', 'y', 'z'
+        distance: Distance in Angstroms
+        models: Models to move (empty = move camera)
+        frames: Animate over N frames (0 = instant)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    command = f"move {axis} {distance}"
+    if models:
+        command += f" models {models}"
+    if frames > 0:
+        command += f" {frames}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Moved {axis} by {distance}A")
+
+
+# ---------------------------------------------------------------------------
+# Tool 90: color_key
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def color_key(
+    palette: str = "rainbow",
+    label_side: str = "right",
+    show: bool = True,
+    session_id: Optional[int] = None,
+) -> str:
+    """Add or remove a color key (legend) to the display.
+
+    Args:
+        palette: Color palette to show (e.g., 'rainbow', 'red-white-blue')
+        label_side: Label position - 'left', 'right', 'top', 'bottom'
+        show: Show (True) or delete (False) the color key
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if not show:
+        command = "key delete"
+    else:
+        command = f"key {palette} labelSide {label_side}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, "Color key " + ("removed" if not show else "added"))
+
+
+# ---------------------------------------------------------------------------
+# Tool 91: foldseek_search
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def foldseek_search(
+    target: str,
+    database: str = "pdb100",
+    session_id: Optional[int] = None,
+) -> str:
+    """Search for structurally similar proteins using Foldseek.
+
+    Args:
+        target: Atomspec for the query structure (e.g., '#1')
+        database: Database to search - 'pdb100', 'afdb50', 'afdb-swissprot', 'afdb-proteome'
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    target = validate_atomspec(target)
+    command = f"foldseek {target} database {database}"
+    result = await run_chimerax_command(command, session_id, timeout=120)
+    return format_chimerax_response(result, f"Foldseek search for {target} in {database}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 92: altlocs
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def altlocs(
+    target: str,
+    altloc: str = "",
+    session_id: Optional[int] = None,
+) -> str:
+    """Show or change alternate conformations (altlocs) for atoms.
+
+    Args:
+        target: Atomspec for atoms with altlocs (e.g., '#1/A:100')
+        altloc: Which altloc to display ('A', 'B', etc.; empty = list available)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    target = validate_atomspec(target)
+    if altloc:
+        command = f"altlocs change {target} {altloc}"
+    else:
+        command = f"altlocs list {target}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Altlocs for {target}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 93: coordset
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def coordset(
+    model: str,
+    frame: int = 1,
+    play: bool = False,
+    session_id: Optional[int] = None,
+) -> str:
+    """Navigate multi-frame structures (NMR ensembles, MD trajectories).
+
+    Args:
+        model: Model spec (e.g., '#1')
+        frame: Frame number to display (starting from 1)
+        play: If True, play through all frames as animation
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    model = validate_atomspec(model)
+    if play:
+        command = f"coordset {model}"
+    else:
+        command = f"coordset {model} {frame}"
+    result = await run_chimerax_command(command, session_id)
+    action = "Playing all frames" if play else f"Frame {frame}"
+    return format_chimerax_response(result, f"{action} of {model}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 94: swap_nucleic_acid
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def swap_nucleic_acid(
+    atomspec: str,
+    new_base: str,
+    session_id: Optional[int] = None,
+) -> str:
+    """Mutate a nucleic acid residue to a different base.
+
+    Args:
+        atomspec: Atomspec for the residue to mutate (e.g., '#1/A:10')
+        new_base: New base ('A', 'G', 'C', 'T', 'U', 'DA', 'DG', 'DC', 'DT')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    atomspec = validate_atomspec(atomspec)
+    command = f"swapna {atomspec} {new_base}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Swapped {atomspec} to {new_base}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 95: set_material
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def set_material(
+    reflectivity: float = 0.0,
+    specular_exponent: float = 0.0,
+    transparency_cast_shadows: bool = False,
+    session_id: Optional[int] = None,
+) -> str:
+    """Control material properties for rendering (reflectivity, shininess).
+
+    Args:
+        reflectivity: Surface reflectivity 0-1 (0 = no change)
+        specular_exponent: Shininess exponent (higher = tighter highlight; 0 = no change)
+        transparency_cast_shadows: Transparent objects cast shadows (default: False)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    parts = ["material"]
+    if reflectivity > 0:
+        parts.append(f"reflectivity {reflectivity}")
+    if specular_exponent > 0:
+        parts.append(f"specularExponent {specular_exponent}")
+    if transparency_cast_shadows:
+        parts.append("transparencyCastShadows true")
+    if len(parts) == 1:
+        return "No material properties specified."
+    command = " ".join(parts)
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, "Material properties updated")
+
+
+# ---------------------------------------------------------------------------
+# Tool 96: name_selection
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def name_selection(
+    name: str,
+    atomspec: str = "",
+    session_id: Optional[int] = None,
+) -> str:
+    """Create a named selection for reuse in other commands.
+
+    Args:
+        name: Name for the selection (e.g., 'binding_site', 'active_loop')
+        atomspec: What to name (e.g., '#1/A:100-120'). Empty = name current selection.
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if atomspec:
+        command = f"name {name} {atomspec}"
+    else:
+        command = f"name {name} sel"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Named selection: {name}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 97: similar_structures
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def similar_structures(
+    target: str,
+    session_id: Optional[int] = None,
+) -> str:
+    """Find structurally similar entries in PDB using the Similar Structures tool.
+
+    Args:
+        target: Atomspec for the query chain (e.g., '#1/A')
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    target = validate_atomspec(target)
+    command = f"similarstructures {target}"
+    result = await run_chimerax_command(command, session_id, timeout=120)
+    return format_chimerax_response(result, f"Similar structures for {target}")
+
+
+# ---------------------------------------------------------------------------
+# Tool 98: struts
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+async def struts(
+    target: str = "all",
+    show: bool = True,
+    length: float = 7.0,
+    session_id: Optional[int] = None,
+) -> str:
+    """Add or remove struts (thin rods connecting nearby atoms for 3D printing support).
+
+    Args:
+        target: Atomspec to add struts to (e.g., '#1')
+        show: Add (True) or remove (False) struts
+        length: Maximum strut length in Angstroms (default: 7.0)
+        session_id: ChimeraX session port (defaults to primary session)
+    """
+    if not show:
+        command = f"~struts {target}"
+    else:
+        command = f"struts {target} length {length}"
+    result = await run_chimerax_command(command, session_id)
+    return format_chimerax_response(result, f"Struts {'removed from' if not show else 'added to'} {target}")

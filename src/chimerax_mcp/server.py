@@ -1050,7 +1050,7 @@ async def measure_buried_area(target1: str, target2: str, session_id: Optional[i
         session_id: ChimeraX session port (defaults to primary session)
     """
     target1, target2 = validate_atomspec(target1), validate_atomspec(target2)
-    command = f"measure buriedArea {target1} withAtoms2 {target2}"
+    command = f"measure buriedarea {target1} withAtoms2 {target2}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Buried area between {target1} and {target2}")
 
@@ -1944,6 +1944,7 @@ async def add_marker(
     z: float,
     color: str = "yellow",
     radius: float = 1.0,
+    model_id: int = 200,
     session_id: Optional[int] = None,
 ) -> str:
     """Place a 3D marker/sphere at a specific coordinate.
@@ -1954,9 +1955,10 @@ async def add_marker(
         z: Z coordinate in Angstroms
         color: Marker color (default: 'yellow')
         radius: Marker radius in Angstroms (default: 1.0)
+        model_id: Marker set model ID (default: 200; reuse to group markers)
         session_id: ChimeraX session port (defaults to primary session)
     """
-    command = f"marker position {x},{y},{z} color {color} radius {radius}"
+    command = f"marker #{model_id} position {x},{y},{z} color {color} radius {radius}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Marker placed at ({x}, {y}, {z})")
 
@@ -2157,7 +2159,7 @@ async def set_attribute(
     target = validate_atomspec(target)
     if attr_type not in ("atoms", "residues", "models"):
         raise ValueError(f"attr_type must be 'atoms', 'residues', or 'models'")
-    command = f"setattr {target} {attr_type} {attribute} {value}"
+    command = f"setattr {target} {attr_type} {attribute} {value} create true"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Set {attribute}={value} on {target}")
 
@@ -2547,14 +2549,14 @@ async def copy_model(
     model: str,
     session_id: Optional[int] = None,
 ) -> str:
-    """Create a copy of a model.
+    """Create a duplicate of a model (as a new model).
 
     Args:
         model: Model spec to copy (e.g., '#1')
         session_id: ChimeraX session port (defaults to primary session)
     """
     model = validate_atomspec(model)
-    command = f"mcopy {model}"
+    command = f"combine {model}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Copied model {model}")
 
@@ -3076,31 +3078,41 @@ async def get_coordinates(
 
 @mcp.tool()
 async def set_graphics(
-    quality: str = "",
-    rate: int = 0,
+    quality: float = 0.0,
+    max_frame_rate: int = 0,
     silhouettes: bool = False,
     session_id: Optional[int] = None,
 ) -> str:
     """Control rendering quality and graphics settings.
 
+    Each setting is a separate subcommand — multiple can be applied at once.
+
     Args:
-        quality: Rendering quality - 'low', 'medium', 'high', or '' for current
-        rate: Target frame rate (0 = unlimited)
+        quality: Quality scale factor (1.0 = default, 2.0 = higher, 0.5 = lower; 0 = report current)
+        max_frame_rate: Target max frame rate (0 = don't change)
         silhouettes: Enable edge silhouettes (default: False)
         session_id: ChimeraX session port (defaults to primary session)
     """
-    parts = ["graphics"]
-    if quality:
-        parts.append(f"quality {quality}")
-    if rate > 0:
-        parts.append(f"rate {rate}")
+    results = []
+    if quality > 0:
+        r = await run_chimerax_command(f"graphics quality {quality}", session_id)
+        results.append(r)
+    if max_frame_rate > 0:
+        r = await run_chimerax_command(f"graphics rate maxFrameRate {max_frame_rate}", session_id)
+        results.append(r)
     if silhouettes:
-        parts.append("silhouettes true")
-    if len(parts) == 1:
-        parts.append("report")
-    command = " ".join(parts)
-    result = await run_chimerax_command(command, session_id)
-    return format_chimerax_response(result, "Graphics settings")
+        r = await run_chimerax_command("graphics silhouettes true", session_id)
+        results.append(r)
+    if not results:
+        r = await run_chimerax_command("graphics", session_id)
+        results.append(r)
+    # Return the last result with all logs merged
+    all_logs: dict = {}
+    for r in results:
+        for level, msgs in r.get("logs", {}).items():
+            all_logs.setdefault(level, []).extend(msgs)
+    combined = {"return_values": [], "json_values": [], "logs": all_logs}
+    return format_chimerax_response(combined, "Graphics settings")
 
 
 # ---------------------------------------------------------------------------

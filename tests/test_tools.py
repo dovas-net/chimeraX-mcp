@@ -762,6 +762,7 @@ class TestAddMarker:
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             await add_marker(10.0, 20.0, 30.0, "red", 2.0)
             cmd = mock.call_args[0][0]
+            assert "marker #200" in cmd
             assert "10.0,20.0,30.0" in cmd
             assert "color red" in cmd
 
@@ -859,7 +860,7 @@ class TestSetAttribute:
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             await set_attribute("#1/A:100-200", "score", "0.95", "residues")
             cmd = mock.call_args[0][0]
-            assert "setattr #1/A:100-200 residues score 0.95" == cmd
+            assert "setattr #1/A:100-200 residues score 0.95 create true" == cmd
 
 
 class TestShowCrosslinks:
@@ -1035,7 +1036,7 @@ class TestCopyModel:
         mock_result = make_result()
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             await copy_model("#1")
-            assert "mcopy #1" == mock.call_args[0][0]
+            assert "combine #1" == mock.call_args[0][0]
 
 
 class TestSetSize:
@@ -1326,11 +1327,14 @@ class TestSetGraphics:
     async def test_sets_quality(self):
         from chimerax_mcp.server import set_graphics
         mock_result = make_result()
-        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
-            await set_graphics(quality="high", silhouettes=True)
-            cmd = mock.call_args[0][0]
-            assert "quality high" in cmd
-            assert "silhouettes true" in cmd
+        calls = []
+        async def mock_run(cmd, port=None, timeout=None):
+            calls.append(cmd)
+            return mock_result
+        with patch("chimerax_mcp.server.run_chimerax_command", side_effect=mock_run):
+            await set_graphics(quality=2.0, silhouettes=True)
+            assert any("graphics quality 2.0" in c for c in calls)
+            assert any("graphics silhouettes true" in c for c in calls)
 
 
 class TestShowHkcage:

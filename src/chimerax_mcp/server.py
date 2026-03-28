@@ -3029,23 +3029,23 @@ async def load_attributes(
 
 @mcp.tool()
 async def fly_camera(
-    target: str = "",
-    frames: int = 60,
+    positions: str,
+    frames: int = 50,
     session_id: Optional[int] = None,
 ) -> str:
-    """Smooth camera fly-through to a position or along a path.
+    """Smooth camera fly-through between named views.
+
+    Views must be saved first with run_command('view name <name>').
+    Use 'start' to include the current view.
 
     Args:
-        target: Atomspec to fly to (e.g., '#1/A:100'), or empty for default path
-        frames: Number of animation frames (default: 60)
+        positions: Space-separated list of named view positions (e.g., 'start pos1 pos2')
+        frames: Frames per leg of the journey (default: 50)
         session_id: ChimeraX session port (defaults to primary session)
     """
-    if target:
-        command = f"fly {target} {frames}"
-    else:
-        command = f"fly {frames}"
+    command = f"fly {frames} {positions}"
     result = await run_chimerax_command(command, session_id)
-    return format_chimerax_response(result, f"Camera fly-through ({frames} frames)")
+    return format_chimerax_response(result, f"Camera fly-through: {positions}")
 
 
 # ---------------------------------------------------------------------------
@@ -3254,26 +3254,34 @@ async def manage_pseudobonds(
 ) -> str:
     """Style or hide pseudobonds (H-bonds, crosslinks, distance monitors, etc.).
 
+    Pseudobonds are styled via color/size commands on the pseudobond model.
+    Use list_models() to find the pseudobond model spec (e.g., '#1.3').
+
     Args:
-        target: Pseudobond model spec (e.g., '#2.1' for H-bond pseudobonds)
+        target: Pseudobond model spec (e.g., '#1.3' for H-bond pseudobonds)
         color: Pseudobond color (e.g., 'cyan')
         radius: Pseudobond stick radius (0 = no change)
-        dashes: Number of dashes (0 = solid, default = no change)
+        dashes: Number of dashes (0 = solid; default = no change)
         show: Show (True) or hide (False) pseudobonds
         session_id: ChimeraX session port (defaults to primary session)
     """
-    if not show:
-        command = f"~pbond {target}" if target else "~pbond"
-    else:
-        command = f"pbond {target}" if target else "pbond"
+    results = []
+    if not show and target:
+        results.append(await run_chimerax_command(f"hide {target} target pb", session_id))
+    elif target:
+        results.append(await run_chimerax_command(f"show {target} target pb", session_id))
         if color:
-            command += f" color {color}"
+            results.append(await run_chimerax_command(f"color {target} {color}", session_id))
         if radius > 0:
-            command += f" radius {radius}"
+            results.append(await run_chimerax_command(f"size {target} stickRadius {radius}", session_id))
         if dashes > 0:
-            command += f" dashes {dashes}"
-    result = await run_chimerax_command(command, session_id)
-    return format_chimerax_response(result, f"Pseudobonds {'hidden' if not show else 'styled'}")
+            results.append(await run_chimerax_command(f"style {target} dashes {dashes}", session_id))
+    all_logs: dict = {}
+    for r in results:
+        for level, msgs in r.get("logs", {}).items():
+            all_logs.setdefault(level, []).extend(msgs)
+    combined = {"return_values": [], "json_values": [], "logs": all_logs}
+    return format_chimerax_response(combined, f"Pseudobonds {'hidden' if not show else 'styled'}")
 
 
 # ---------------------------------------------------------------------------
@@ -3304,21 +3312,33 @@ async def residue_fit_density(
 # ---------------------------------------------------------------------------
 
 @mcp.tool()
-async def show_rna(
-    target: str = "all",
-    style: str = "ladder",
+async def build_rna(
+    pairs: str,
+    sequence: str = "",
+    length: int = 0,
+    pattern: str = "circle",
     session_id: Optional[int] = None,
 ) -> str:
-    """RNA-specific visualization and analysis.
+    """Build a rough 3D model of single-stranded RNA from base-pairing data.
 
     Args:
-        target: Atomspec for RNA (e.g., '#1')
-        style: Display style - 'ladder', 'slab', 'tube', 'backbone'
+        pairs: Base-pairing info as comma-separated triples (e.g., '1,50,10,60,70,2')
+               Each triple is: start1, start2, stem_length
+        sequence: Amino acid sequence string or path to FASTA file (for atomic model)
+        length: Total number of nucleotides (0 = auto from pairs)
+        pattern: Layout pattern - 'circle', 'helix', 'line', 'sphere'
         session_id: ChimeraX session port (defaults to primary session)
     """
-    command = f"rna {target} {style}"
-    result = await run_chimerax_command(command, session_id)
-    return format_chimerax_response(result, f"RNA display for {target} ({style})")
+    if sequence:
+        command = f"rna model {sequence} pairs {pairs}"
+    else:
+        command = f"rna path {pairs}"
+    if length > 0:
+        command += f" length {length}"
+    if pattern != "circle":
+        command += f" pattern {pattern}"
+    result = await run_chimerax_command(command, session_id, timeout=120)
+    return format_chimerax_response(result, f"RNA model built")
 
 
 # ---------------------------------------------------------------------------

@@ -1304,12 +1304,12 @@ class TestLoadAttributes:
 
 class TestFlyCamera:
     @pytest.mark.asyncio
-    async def test_fly_to_target(self):
+    async def test_fly_between_views(self):
         from chimerax_mcp.server import fly_camera
         mock_result = make_result()
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
-            await fly_camera("#1/A:100", frames=90)
-            assert "fly #1/A:100 90" == mock.call_args[0][0]
+            await fly_camera("start pos1 pos2", frames=30)
+            assert "fly 30 start pos1 pos2" == mock.call_args[0][0]
 
 
 class TestGetCoordinates:
@@ -1406,19 +1406,22 @@ class TestManagePseudobonds:
     async def test_styles(self):
         from chimerax_mcp.server import manage_pseudobonds
         mock_result = make_result()
-        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
-            await manage_pseudobonds("#2.1", color="cyan", radius=0.3)
-            cmd = mock.call_args[0][0]
-            assert "pbond #2.1" in cmd
-            assert "color cyan" in cmd
+        calls = []
+        async def mock_run(cmd, port=None, timeout=None):
+            calls.append(cmd)
+            return mock_result
+        with patch("chimerax_mcp.server.run_chimerax_command", side_effect=mock_run):
+            await manage_pseudobonds("#1.3", color="cyan", radius=0.3)
+            assert any("color #1.3 cyan" in c for c in calls)
+            assert any("size #1.3 stickRadius 0.3" in c for c in calls)
 
     @pytest.mark.asyncio
     async def test_hides(self):
         from chimerax_mcp.server import manage_pseudobonds
         mock_result = make_result()
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
-            await manage_pseudobonds("#2.1", show=False)
-            assert "~pbond #2.1" == mock.call_args[0][0]
+            await manage_pseudobonds("#1.3", show=False)
+            assert "hide #1.3 target pb" == mock.call_args[0][0]
 
 
 class TestResidueFitDensity:
@@ -1431,14 +1434,16 @@ class TestResidueFitDensity:
             assert "resfit #1 inMap #2" == mock.call_args[0][0]
 
 
-class TestShowRna:
+class TestBuildRna:
     @pytest.mark.asyncio
-    async def test_shows(self):
-        from chimerax_mcp.server import show_rna
+    async def test_builds_path(self):
+        from chimerax_mcp.server import build_rna
         mock_result = make_result()
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
-            await show_rna("#1", "backbone")
-            assert "rna #1 backbone" == mock.call_args[0][0]
+            await build_rna("1,50,10", length=60)
+            cmd = mock.call_args[0][0]
+            assert "rna path 1,50,10" in cmd
+            assert "length 60" in cmd
 
 
 class TestRollView:

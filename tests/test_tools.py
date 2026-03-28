@@ -1199,6 +1199,271 @@ class TestStruts:
 
 
 # ===================================================================
+# Remaining commands — full coverage
+# ===================================================================
+
+
+class TestCreateAlias:
+    @pytest.mark.asyncio
+    async def test_creates(self):
+        from chimerax_mcp.server import create_alias
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await create_alias("showsite", "select #1/A:100-120; show sel target ab")
+            assert "alias showsite" in mock.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_deletes(self):
+        from chimerax_mcp.server import create_alias
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await create_alias("showsite", delete=True)
+            assert "alias delete showsite" == mock.call_args[0][0]
+
+
+class TestShowAniso:
+    @pytest.mark.asyncio
+    async def test_shows(self):
+        from chimerax_mcp.server import show_aniso
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await show_aniso("#1", scale=1.5)
+            assert "aniso #1 scale 1.5" == mock.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_hides(self):
+        from chimerax_mcp.server import show_aniso
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await show_aniso("#1", show=False)
+            assert "~aniso #1" == mock.call_args[0][0]
+
+
+class TestPredictBoltz:
+    @pytest.mark.asyncio
+    async def test_predicts(self):
+        from chimerax_mcp.server import predict_boltz
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await predict_boltz("MKTLLILAVL")
+            assert "boltz predict MKTLLILAVL" == mock.call_args[0][0]
+
+
+class TestShowBumps:
+    @pytest.mark.asyncio
+    async def test_shows(self):
+        from chimerax_mcp.server import show_bumps
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await show_bumps("#1")
+            assert "bumps #1" == mock.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_hides(self):
+        from chimerax_mcp.server import show_bumps
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await show_bumps("#1", show=False)
+            assert "~bumps #1" == mock.call_args[0][0]
+
+
+class TestCheckChirality:
+    @pytest.mark.asyncio
+    async def test_checks(self):
+        from chimerax_mcp.server import check_chirality
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await check_chirality("#1")
+            assert "chirality #1" == mock.call_args[0][0]
+
+
+class TestCrossfade:
+    @pytest.mark.asyncio
+    async def test_crossfades(self):
+        from chimerax_mcp.server import crossfade
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await crossfade(60)
+            assert "crossfade 60" == mock.call_args[0][0]
+
+
+class TestLoadAttributes:
+    @pytest.mark.asyncio
+    async def test_loads(self):
+        from chimerax_mcp.server import load_attributes
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await load_attributes("bfactors.defattr")
+            assert "defattr bfactors.defattr" == mock.call_args[0][0]
+
+
+class TestFlyCamera:
+    @pytest.mark.asyncio
+    async def test_fly_to_target(self):
+        from chimerax_mcp.server import fly_camera
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await fly_camera("#1/A:100", frames=90)
+            assert "fly #1/A:100 90" == mock.call_args[0][0]
+
+
+class TestGetCoordinates:
+    @pytest.mark.asyncio
+    async def test_gets(self):
+        from chimerax_mcp.server import get_coordinates
+        mock_result = make_result(logs={"info": ["10.5 20.3 30.1"]})
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            result = await get_coordinates("#1/A:100@CA")
+            assert "getcrd #1/A:100@CA" == mock.call_args[0][0]
+
+
+class TestSetGraphics:
+    @pytest.mark.asyncio
+    async def test_sets_quality(self):
+        from chimerax_mcp.server import set_graphics
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await set_graphics(quality="high", silhouettes=True)
+            cmd = mock.call_args[0][0]
+            assert "quality high" in cmd
+            assert "silhouettes true" in cmd
+
+
+class TestShowHkcage:
+    @pytest.mark.asyncio
+    async def test_t1(self):
+        from chimerax_mcp.server import show_hkcage
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await show_hkcage(1, 0, radius=150.0)
+            assert "hkcage 1 0 radius 150.0" == mock.call_args[0][0]
+
+
+class TestManageLog:
+    @pytest.mark.asyncio
+    async def test_clears(self):
+        from chimerax_mcp.server import manage_log
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await manage_log("clear")
+            assert "log clear" == mock.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_saves(self):
+        from chimerax_mcp.server import manage_log
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await manage_log("save", "output.log")
+            assert "log save output.log" == mock.call_args[0][0]
+
+
+class TestRunModeller:
+    @pytest.mark.asyncio
+    async def test_comparative(self):
+        from chimerax_mcp.server import run_modeller
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await run_modeller("#1/A", "comparative")
+            assert "modeller comparative #1/A" == mock.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_invalid_action(self):
+        from chimerax_mcp.server import run_modeller
+        with pytest.raises(ValueError):
+            await run_modeller("#1", "refine")
+
+
+class TestPlayMapSeries:
+    @pytest.mark.asyncio
+    async def test_plays(self):
+        from chimerax_mcp.server import play_map_series
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await play_map_series("#2", "play")
+            assert "mseries #2 play" == mock.call_args[0][0]
+
+
+class TestShowMutationScores:
+    @pytest.mark.asyncio
+    async def test_shows(self):
+        from chimerax_mcp.server import show_mutation_scores
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await show_mutation_scores("#1")
+            assert "mutationscores #1" == mock.call_args[0][0]
+
+
+class TestManagePseudobonds:
+    @pytest.mark.asyncio
+    async def test_styles(self):
+        from chimerax_mcp.server import manage_pseudobonds
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await manage_pseudobonds("#2.1", color="cyan", radius=0.3)
+            cmd = mock.call_args[0][0]
+            assert "pbond #2.1" in cmd
+            assert "color cyan" in cmd
+
+    @pytest.mark.asyncio
+    async def test_hides(self):
+        from chimerax_mcp.server import manage_pseudobonds
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await manage_pseudobonds("#2.1", show=False)
+            assert "~pbond #2.1" == mock.call_args[0][0]
+
+
+class TestResidueFitDensity:
+    @pytest.mark.asyncio
+    async def test_fits(self):
+        from chimerax_mcp.server import residue_fit_density
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await residue_fit_density("#1", "#2")
+            assert "resfit #1 inMap #2" == mock.call_args[0][0]
+
+
+class TestShowRna:
+    @pytest.mark.asyncio
+    async def test_shows(self):
+        from chimerax_mcp.server import show_rna
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await show_rna("#1", "backbone")
+            assert "rna #1 backbone" == mock.call_args[0][0]
+
+
+class TestRollView:
+    @pytest.mark.asyncio
+    async def test_rolls(self):
+        from chimerax_mcp.server import roll_view
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await roll_view("y", 2.0, 180)
+            assert "roll y 2.0 180" == mock.call_args[0][0]
+
+
+class TestShowTopography:
+    @pytest.mark.asyncio
+    async def test_shows(self):
+        from chimerax_mcp.server import show_topography
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await show_topography("#2")
+            assert "topography #2" == mock.call_args[0][0]
+
+
+class TestWobbleView:
+    @pytest.mark.asyncio
+    async def test_wobbles(self):
+        from chimerax_mcp.server import wobble_view
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await wobble_view("y", 5.0, frames=100)
+            assert "wobble y 5.0 100" == mock.call_args[0][0]
+
+
+# ===================================================================
 # Existing tool tests below
 # ===================================================================
 

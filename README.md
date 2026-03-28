@@ -9,7 +9,7 @@ ChimeraX MCP bridges the gap between conversational AI and molecular visualizati
 The server handles everything automatically: discovering or launching ChimeraX instances, managing sessions across multiple ports, formatting results, and providing contextual error hints when something goes wrong.
 
 **Key capabilities:**
-- **98 specialized tools** covering the full structural biology workflow
+- **119 specialized tools** covering the full structural biology workflow
 - **Auto-launch** — ChimeraX starts automatically when needed, no manual setup
 - **Multi-session** — work with multiple ChimeraX instances simultaneously
 - **Input validation** — atomspec validation and error hints for common mistakes
@@ -55,7 +55,7 @@ That's it. ChimeraX will auto-launch with REST enabled when you first use a tool
 | `CHIMERAX_TIMEOUT` | `60` | Default command timeout (seconds) |
 | `CHIMERAX_DEBUG` | `false` | Enable debug logging (`1`, `true`, or `yes`) |
 
-## Available Tools (98)
+## Available Tools (119)
 
 ### Core (2)
 
@@ -243,6 +243,72 @@ That's it. ChimeraX will auto-launch with REST enabled when you first use a tool
 | `struts` | Add/remove struts for 3D printing support |
 | `undo_redo` | Undo or redo recent actions |
 
+### Crystallography & Virology (3)
+
+| Tool | Description |
+|------|-------------|
+| `show_aniso` | Show/hide thermal ellipsoids (anisotropic displacement) |
+| `show_hkcage` | Display icosahedral cage for virus capsid analysis |
+| `check_chirality` | Check and report chirality of residues |
+
+### Validation & Scoring (3)
+
+| Tool | Description |
+|------|-------------|
+| `residue_fit_density` | Per-residue density fit scores for model validation |
+| `show_mutation_scores` | Display mutation fitness/conservation scores |
+| `show_bumps` | Show/hide steric bump indicators |
+
+### Homology & Prediction (2)
+
+| Tool | Description |
+|------|-------------|
+| `run_modeller` | Run Modeller for homology modeling or loop refinement |
+| `predict_boltz` | Boltz structure prediction |
+
+### RNA-Specific (1)
+
+| Tool | Description |
+|------|-------------|
+| `show_rna` | RNA-specific visualization (ladder, slab, tube, backbone) |
+
+### Camera Animation (4)
+
+| Tool | Description |
+|------|-------------|
+| `fly_camera` | Smooth camera fly-through to positions |
+| `roll_view` | Continuous spin rotation around an axis |
+| `wobble_view` | Oscillating rotation for depth perception |
+| `crossfade` | Smooth visual crossfade transition for movies |
+
+### Data & Attributes (4)
+
+| Tool | Description |
+|------|-------------|
+| `get_coordinates` | Get XYZ coordinates for atoms |
+| `load_attributes` | Load custom attributes from file (.defattr) |
+| `manage_pseudobonds` | Style or hide pseudobonds (H-bonds, crosslinks, etc.) |
+| `manage_log` | Control the ChimeraX log panel (show, clear, save) |
+
+### Graphics & Rendering (2)
+
+| Tool | Description |
+|------|-------------|
+| `set_graphics` | Control rendering quality and frame rate |
+| `show_topography` | Create height-field surface from volume data |
+
+### Automation (1)
+
+| Tool | Description |
+|------|-------------|
+| `create_alias` | Create, list, or delete command aliases (macros) |
+
+### Map Series (1)
+
+| Tool | Description |
+|------|-------------|
+| `play_map_series` | Play through density map series (time-resolved data) |
+
 ### Documentation (2)
 
 | Tool | Description |
@@ -287,7 +353,7 @@ Once configured, just ask Claude naturally:
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 
-# Run tests (189 tests)
+# Run tests (216 tests)
 .venv/bin/pytest tests/ -v
 
 # Enable debug logging
@@ -298,7 +364,7 @@ CHIMERAX_DEBUG=true .venv/bin/python -m chimerax_mcp
 
 | Module | Role |
 |--------|------|
-| `server.py` | FastMCP instance, all 98 tool definitions, entry point |
+| `server.py` | FastMCP instance, all 119 tool definitions, entry point |
 | `chimera_rest.py` | REST client, auto-launch, instance discovery, session management |
 | `formatting.py` | Response formatting, error hints, input validation |
 | `docs.py` | Atomspec guide, ChimeraX command documentation (HTML to markdown) |

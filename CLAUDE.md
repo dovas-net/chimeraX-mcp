@@ -1,6 +1,6 @@
 # ChimeraX MCP Server
 
-Standalone MCP server connecting Claude Code CLI to UCSF ChimeraX for molecular visualization and structural analysis. 98 tools covering structure management, visualization, analysis, measurement, sequence, editing, volume/surface, selection, labels, surfaces, and session management.
+Standalone MCP server connecting Claude Code CLI to UCSF ChimeraX for molecular visualization and structural analysis. 119 tools covering structure management, visualization, analysis, measurement, sequence, editing, volume/surface, selection, labels, surfaces, and session management.
 
 ## Architecture
 

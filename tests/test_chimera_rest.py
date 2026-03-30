@@ -1,27 +1,43 @@
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
 from chimerax_mcp.chimera_rest import (
+    cleanup,
     find_chimerax_executable,
     find_available_port,
+    find_best_chimerax_instance,
     get_chimerax_url,
     is_chimerax_running,
     run_chimerax_command,
 )
 
 
+@pytest.fixture(autouse=True)
+async def cleanup_rest_session():
+    yield
+    await cleanup()
+
+
 class TestFindChimeraXExecutable:
     def test_returns_none_when_not_found(self):
-        with patch("chimerax_mcp.chimera_rest._find_chimerax_installation_directory", return_value=None):
-            assert find_chimerax_executable() is None
+        with patch("chimerax_mcp.chimera_rest.shutil.which", return_value=None):
+            with patch("chimerax_mcp.chimera_rest._candidate_installation_directories", return_value=[]):
+                with patch("chimerax_mcp.chimera_rest._find_chimerax_installation_directory", return_value=None):
+                    assert find_chimerax_executable() is None
+
+    def test_finds_executable_on_path(self):
+        with patch("chimerax_mcp.chimera_rest.shutil.which", return_value="/usr/local/bin/ChimeraX"):
+            assert find_chimerax_executable() == "/usr/local/bin/ChimeraX"
 
     def test_finds_macos_executable(self, tmp_path):
         exe = tmp_path / "Contents" / "MacOS" / "ChimeraX"
         exe.parent.mkdir(parents=True)
         exe.touch()
-        with patch("chimerax_mcp.chimera_rest._find_chimerax_installation_directory", return_value=str(tmp_path)):
-            with patch("sys.platform", "darwin"):
-                result = find_chimerax_executable()
-                assert result == str(exe)
+        with patch("chimerax_mcp.chimera_rest.shutil.which", return_value=None):
+            with patch("chimerax_mcp.chimera_rest._candidate_installation_directories", return_value=[]):
+                with patch("chimerax_mcp.chimera_rest._find_chimerax_installation_directory", return_value=str(tmp_path)):
+                    with patch("sys.platform", "darwin"):
+                        result = find_chimerax_executable()
+                        assert result == str(exe)
 
 
 class TestFindAvailablePort:
@@ -53,8 +69,11 @@ class TestGetChimeraXUrl:
 class TestIsChimeraXRunning:
     @pytest.mark.asyncio
     async def test_returns_false_when_not_running(self):
-        result = await is_chimerax_running(59999)
-        assert result is False
+        try:
+            result = await is_chimerax_running(59999)
+            assert result is False
+        finally:
+            await cleanup()
 
 
 class TestRunChimeraXCommand:
@@ -66,6 +85,9 @@ class TestRunChimeraXCommand:
 
     @pytest.mark.asyncio
     async def test_parses_successful_json_response(self):
+        import chimerax_mcp.chimera_rest as rest_mod
+        old_default = rest_mod._default_port
+
         mock_response = AsyncMock()
         mock_response.status = 200
         mock_response.json = AsyncMock(return_value={
@@ -80,11 +102,15 @@ class TestRunChimeraXCommand:
         mock_session = AsyncMock()
         mock_session.get = MagicMock(return_value=mock_response)
 
-        with patch("chimerax_mcp.chimera_rest.get_session", return_value=mock_session):
-            with patch("chimerax_mcp.chimera_rest.is_chimerax_running", return_value=True):
-                with patch("chimerax_mcp.chimera_rest.find_best_chimerax_instance", return_value=8080):
-                    result = await run_chimerax_command("open 1abc")
-                    assert result["logs"]["info"] == ["Opened 1abc"]
+        try:
+            with patch("chimerax_mcp.chimera_rest.get_session", return_value=mock_session):
+                with patch("chimerax_mcp.chimera_rest.is_chimerax_running", return_value=True):
+                    with patch("chimerax_mcp.chimera_rest.find_best_chimerax_instance", return_value=8080):
+                        result = await run_chimerax_command("open 1abc")
+                        assert result["logs"]["info"] == ["Opened 1abc"]
+                        assert rest_mod._default_port == 8080
+        finally:
+            rest_mod._default_port = old_default
 
     @pytest.mark.asyncio
     async def test_raises_on_chimerax_error(self):
@@ -107,6 +133,29 @@ class TestRunChimeraXCommand:
                 with patch("chimerax_mcp.chimera_rest.find_best_chimerax_instance", return_value=8080):
                     with pytest.raises(Exception, match="Unknown command"):
                         await run_chimerax_command("foobar")
+
+
+class TestFindBestChimeraXInstance:
+    @pytest.mark.asyncio
+    async def test_prefers_known_working_port(self):
+        import chimerax_mcp.chimera_rest as rest_mod
+
+        old_default = rest_mod._default_port
+        old_instances = dict(rest_mod._instances)
+        rest_mod._default_port = 8080
+        rest_mod._instances.clear()
+        rest_mod._instances[8082] = {"port": 8082, "session_name": "alt"}
+
+        async def mock_running(port):
+            return port == 8082
+
+        try:
+            with patch("chimerax_mcp.chimera_rest.is_chimerax_running", side_effect=mock_running):
+                assert await find_best_chimerax_instance() == 8082
+        finally:
+            rest_mod._default_port = old_default
+            rest_mod._instances.clear()
+            rest_mod._instances.update(old_instances)
 
 
 class TestParseInfoJson:

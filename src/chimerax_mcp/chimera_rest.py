@@ -11,11 +11,15 @@ import asyncio
 import socket
 import time
 import subprocess
+import shutil
 from typing import Optional
 
 import aiohttp
 
-from chimerax_mcp.docs import _find_chimerax_installation_directory
+from chimerax_mcp.docs import (
+    _candidate_installation_directories,
+    _find_chimerax_installation_directory,
+)
 from chimerax_mcp.formatting import add_error_hints
 
 logger = logging.getLogger("chimerax_mcp.rest")
@@ -35,9 +39,42 @@ if DEBUG:
     logging.basicConfig(level=logging.DEBUG)
     logger.setLevel(logging.DEBUG)
 
-_instances: dict = {}          # port -> instance info
+_instances: dict[int, dict] = {}          # port -> instance info
 _default_port: int = DEFAULT_CHIMERAX_PORT
 _session: Optional[aiohttp.ClientSession] = None
+
+
+def _unique_ports(ports: list[int]) -> list[int]:
+    """Return ports in their original order with duplicates removed."""
+    return list(dict.fromkeys(ports))
+
+
+def _remember_instance(port: int, *, promote: bool = False, **info) -> None:
+    """Merge instance metadata and optionally promote the port as default."""
+    global _default_port
+
+    instance = _instances.get(port, {"port": port})
+    for key, value in info.items():
+        if value is not None:
+            instance[key] = value
+    _instances[port] = instance
+
+    if promote:
+        _default_port = port
+
+
+async def _probe_running_ports(ports: list[int]) -> dict[int, bool]:
+    """Probe candidate ports concurrently and return their reachability."""
+    unique_ports = _unique_ports(ports)
+    results = await asyncio.gather(
+        *(is_chimerax_running(port) for port in unique_ports),
+        return_exceptions=True,
+    )
+
+    statuses: dict[int, bool] = {}
+    for port, result in zip(unique_ports, results):
+        statuses[port] = bool(result) if not isinstance(result, Exception) else False
+    return statuses
 
 
 # ---------------------------------------------------------------------------
@@ -52,22 +89,42 @@ def find_chimerax_executable() -> Optional[str]:
             return CHIMERAX_PATH_OVERRIDE
         logger.warning("CHIMERAX_PATH=%s does not exist", CHIMERAX_PATH_OVERRIDE)
 
+    for exe_name in ("ChimeraX", "chimerax", "ChimeraX.exe"):
+        resolved = shutil.which(exe_name)
+        if resolved:
+            logger.debug("Found ChimeraX executable on PATH: %s", resolved)
+            return resolved
+
     install_dir = _find_chimerax_installation_directory()
-    if install_dir is None:
-        logger.debug("No ChimeraX installation directory found")
-        return None
+    install_dirs: list[str] = []
+    if install_dir is not None:
+        install_dirs.append(install_dir)
+    install_dirs.extend(
+        candidate for candidate in _candidate_installation_directories()
+        if candidate not in install_dirs
+    )
 
-    if sys.platform == 'darwin':
-        exe = os.path.join(install_dir, 'Contents', 'MacOS', 'ChimeraX')
-    elif sys.platform == 'win32':
-        exe = os.path.join(install_dir, 'bin', 'ChimeraX.exe')
-    else:
-        exe = os.path.join(install_dir, 'bin', 'ChimeraX')
+    for install_dir in install_dirs:
+        if sys.platform == 'darwin':
+            candidates = [os.path.join(install_dir, 'Contents', 'MacOS', 'ChimeraX')]
+        elif sys.platform == 'win32':
+            candidates = [
+                os.path.join(install_dir, 'bin', 'ChimeraX.exe'),
+                os.path.join(install_dir, 'ChimeraX.exe'),
+            ]
+        else:
+            candidates = [
+                os.path.join(install_dir, 'bin', 'ChimeraX'),
+                os.path.join(install_dir, 'bin', 'chimerax'),
+                os.path.join(install_dir, 'ChimeraX'),
+            ]
 
-    if os.path.exists(exe):
-        logger.debug("Found ChimeraX executable: %s", exe)
-        return exe
-    logger.debug("ChimeraX executable not found at %s", exe)
+        for exe in candidates:
+            if os.path.exists(exe):
+                logger.debug("Found ChimeraX executable: %s", exe)
+                return exe
+
+    logger.debug("No ChimeraX executable found via override, PATH, or common install locations")
     return None
 
 
@@ -152,15 +209,18 @@ async def list_running_instances() -> dict:
     """Return a dict of all detected running ChimeraX REST instances."""
     running: dict = {}
 
-    # Check known instances
-    for port, info in list(_instances.items()):
-        if await is_chimerax_running(port):
-            running[port] = info
+    known_ports = list(_instances.keys())
+    scanned_ports = list(range(8080, 8090))
+    statuses = await _probe_running_ports(known_ports + scanned_ports)
 
-    # Scan common ports 8080-8089
-    for port in range(8080, 8090):
-        if port not in running and await is_chimerax_running(port):
-            running[port] = {'port': port, 'auto_discovered': True}
+    for port in known_ports:
+        if statuses.get(port):
+            running[port] = _instances[port]
+
+    for port in scanned_ports:
+        if port not in running and statuses.get(port):
+            _remember_instance(port, auto_discovered=True)
+            running[port] = _instances[port]
 
     return running
 
@@ -234,12 +294,12 @@ async def start_chimerax(
     if not force_new and port == _default_port:
         found, existing_port = await check_existing_rest_server()
         if found:
-            _instances[existing_port] = {'port': existing_port, 'auto_discovered': True}
+            _remember_instance(existing_port, auto_discovered=True)
             return True, existing_port
 
     # Already running on requested port?
     if await is_chimerax_running(port):
-        _instances[port] = {'port': port}
+        _remember_instance(port)
         return True, port
 
     chimerax_path = find_chimerax_executable()
@@ -272,11 +332,11 @@ async def start_chimerax(
             return False, actual_port
 
     # Register in instances
-    _instances[actual_port] = {
-        'port': actual_port,
-        'session_name': session_name,
-        'started_at': time.time(),
-    }
+    _remember_instance(
+        actual_port,
+        session_name=session_name,
+        started_at=time.time(),
+    )
 
     # Wait up to 30 seconds
     logger.info("Waiting for ChimeraX to start on port %d...", actual_port)
@@ -303,11 +363,21 @@ async def start_chimerax(
 
 async def check_existing_rest_server() -> tuple[bool, int]:
     """Scan for an already-running ChimeraX REST server on common ports."""
-    common_ports = [DEFAULT_CHIMERAX_PORT, 8081, 8082, 8083, 7955, 9000]
+    common_ports = _unique_ports([
+        _default_port,
+        DEFAULT_CHIMERAX_PORT,
+        *list(_instances.keys()),
+        8081,
+        8082,
+        8083,
+        7955,
+        9000,
+    ])
+    statuses = await _probe_running_ports(common_ports)
     for port in common_ports:
-        if await is_chimerax_running(port):
+        if statuses.get(port):
             return True, port
-    return False, DEFAULT_CHIMERAX_PORT
+    return False, _default_port
 
 
 # ---------------------------------------------------------------------------
@@ -317,17 +387,21 @@ async def check_existing_rest_server() -> tuple[bool, int]:
 async def find_best_chimerax_instance() -> int:
     """Return the port of the best available ChimeraX instance.
 
-    Checks the default port first, then common alternatives.
-    Does NOT mutate _default_port.
+    Checks the default port first, then known and common alternatives.
     """
-    # Check default port first
-    if await is_chimerax_running(_default_port):
-        return _default_port
-
-    # Check common alternatives
-    common_ports = [8081, 8082, 8083, 7955, 9000]
-    for port in common_ports:
-        if await is_chimerax_running(port):
+    candidate_ports = _unique_ports([
+        _default_port,
+        *list(_instances.keys()),
+        DEFAULT_CHIMERAX_PORT,
+        8081,
+        8082,
+        8083,
+        7955,
+        9000,
+    ])
+    statuses = await _probe_running_ports(candidate_ports)
+    for port in candidate_ports:
+        if statuses.get(port):
             return port
 
     # Fall back to default
@@ -399,6 +473,7 @@ async def run_chimerax_command(
 
     try:
         result = await _execute_command_request(session, url, command, aio_timeout)
+        _remember_instance(port, promote=True)
         logger.debug("Command completed: %s", command[:80])
         return result
     except aiohttp.ClientConnectorError:
@@ -416,6 +491,7 @@ async def run_chimerax_command(
                 "a new instance automatically."
             )
         logger.info("Auto-launched ChimeraX on port %d", actual_port)
+        _remember_instance(actual_port, promote=True)
         url = f"{get_chimerax_url(actual_port)}/run"
         return await _execute_command_request(session, url, command, aio_timeout)
 

@@ -31,6 +31,28 @@ def validate_atomspec(spec: str) -> str:
     return spec
 
 
+def quote_chimerax_arg(value: str) -> str:
+    """Quote a free-form ChimeraX command argument.
+
+    This is intended for filenames, labels, preset names, and other text values
+    that may contain spaces or quotes. The value is always wrapped in double
+    quotes and escaped for ChimeraX's command parser.
+    """
+    if value is None:
+        raise ValueError("Command argument cannot be None")
+
+    text = str(value)
+    escaped = (
+        text
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+        .replace("\t", "\\t")
+    )
+    return f'"{escaped}"'
+
+
 def format_chimerax_response(result: dict, context: str = "") -> str:
     """Format a ChimeraX REST API result into a human-readable string.
 

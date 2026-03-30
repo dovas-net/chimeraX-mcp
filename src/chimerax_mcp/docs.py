@@ -5,6 +5,7 @@ documentation from the installed HTML docs.
 """
 
 import os
+import shutil
 import sys
 from typing import Optional
 
@@ -222,27 +223,88 @@ def _find_parent_directory(path: str, dir_name: str) -> Optional[str]:
     return None
 
 
+def _installation_dir_from_path(path: str) -> Optional[str]:
+    """Infer a ChimeraX installation root from a file or directory path."""
+    from sys import platform as sys_platform
+
+    if sys_platform == 'darwin':
+        cdir = _find_parent_directory(path, 'Contents')
+    elif sys_platform == 'win32':
+        cdir = _find_parent_directory(path, 'bin')
+    else:
+        cdir = _find_parent_directory(path, 'bin') or _find_parent_directory(path, 'lib')
+
+    if cdir:
+        return os.path.dirname(cdir)
+    return None
+
+
+def _candidate_installation_directories() -> list[str]:
+    """Return common ChimeraX installation roots for the current platform."""
+    from sys import platform as sys_platform
+
+    candidates: list[str] = []
+
+    if sys_platform == 'darwin':
+        import glob as _glob
+        candidates.extend(sorted(_glob.glob('/Applications/ChimeraX*.app'), reverse=True))
+        candidates.extend(sorted(_glob.glob(os.path.expanduser('~/Applications/ChimeraX*.app')), reverse=True))
+    elif sys_platform == 'win32':
+        import glob as _glob
+
+        bases = [
+            os.environ.get("PROGRAMFILES"),
+            os.environ.get("PROGRAMFILES(X86)"),
+            os.environ.get("LOCALAPPDATA"),
+        ]
+        patterns = [
+            "ChimeraX*",
+            "UCSF/ChimeraX*",
+            "RBVI/ChimeraX*",
+        ]
+        for base in bases:
+            if not base:
+                continue
+            for pattern in patterns:
+                candidates.extend(sorted(_glob.glob(os.path.join(base, pattern)), reverse=True))
+    else:
+        import glob as _glob
+
+        candidates.extend([
+            "/opt/UCSF/ChimeraX",
+            "/opt/chimerax",
+            "/usr/local/chimerax",
+            "/usr/local/UCSF/ChimeraX",
+            "/usr/share/chimerax",
+        ])
+        candidates.extend(sorted(_glob.glob('/opt/ChimeraX*'), reverse=True))
+        candidates.extend(sorted(_glob.glob('/opt/UCSF/ChimeraX*'), reverse=True))
+
+    deduped: list[str] = []
+    for candidate in candidates:
+        if candidate and candidate not in deduped:
+            deduped.append(candidate)
+    return deduped
+
+
 def _find_chimerax_installation_directory() -> Optional[str]:
     """Find the ChimeraX installation directory using multiple strategies."""
     import sys as _sys
-    from sys import platform as sys_platform
 
-    for base_path in [os.path.realpath(_sys.executable), os.path.abspath(__file__)]:
-        if sys_platform == 'darwin':
-            cdir = _find_parent_directory(base_path, 'Contents')
-        elif sys_platform == 'win32':
-            cdir = _find_parent_directory(base_path, 'bin')
-        else:
-            cdir = _find_parent_directory(base_path, 'lib')
-        if cdir:
-            return os.path.dirname(cdir)
+    search_paths = [os.path.realpath(_sys.executable), os.path.abspath(__file__)]
+    for exe_name in ("ChimeraX", "chimerax", "ChimeraX.exe"):
+        resolved = shutil.which(exe_name)
+        if resolved:
+            search_paths.append(os.path.realpath(resolved))
 
-    # Standalone fallback: glob for ChimeraX on macOS
-    if sys_platform == 'darwin':
-        import glob as _glob
-        matches = sorted(_glob.glob('/Applications/ChimeraX*.app'), reverse=True)
-        if matches:
-            return matches[0]
+    for base_path in search_paths:
+        install_dir = _installation_dir_from_path(base_path)
+        if install_dir:
+            return install_dir
+
+    for candidate in _candidate_installation_directories():
+        if os.path.exists(candidate):
+            return candidate
 
     return None
 
@@ -253,16 +315,24 @@ def get_docs_path() -> Optional[str]:
     if install_dir is None:
         return None
 
+    candidate_paths = []
     platform = sys.platform
     if platform == 'darwin':
-        docs_path = os.path.join(install_dir, 'Contents', 'share', 'docs')
+        candidate_paths.append(os.path.join(install_dir, 'Contents', 'share', 'docs'))
     elif platform == 'win32':
-        docs_path = os.path.join(install_dir, 'bin', 'share', 'docs')
+        candidate_paths.extend([
+            os.path.join(install_dir, 'bin', 'share', 'docs'),
+            os.path.join(install_dir, 'share', 'docs'),
+        ])
     else:
-        docs_path = os.path.join(install_dir, 'share', 'docs')
+        candidate_paths.extend([
+            os.path.join(install_dir, 'share', 'docs'),
+            os.path.join(install_dir, 'bin', 'share', 'docs'),
+        ])
 
-    if os.path.isdir(docs_path):
-        return docs_path
+    for docs_path in candidate_paths:
+        if os.path.isdir(docs_path):
+            return docs_path
     return None
 
 

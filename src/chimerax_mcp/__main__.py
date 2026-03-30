@@ -1,3 +1,6 @@
-from chimerax_mcp.server import main
+import sys
 
-main()
+from chimerax_mcp.cli import main
+
+
+sys.exit(main())

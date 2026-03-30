@@ -119,6 +119,14 @@ class TestOpenStructure:
             assert "fetchEmdbMap" in mock.call_args[0][0]
             assert "EMDB" in result
 
+    @pytest.mark.asyncio
+    async def test_quotes_local_paths_with_spaces(self):
+        from chimerax_mcp.server import open_structure
+        mock_result = make_result(logs={"info": ["Opened file"]})
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await open_structure("~/My Structures/test file.pdb")
+            assert 'open "~/My Structures/test file.pdb"' == mock.call_args[0][0]
+
 
 class TestSaveImage:
     @pytest.mark.asyncio
@@ -363,6 +371,14 @@ class TestLabelAtoms:
             assert "label delete" in mock.call_args[0][0]
             assert "Removed" in result
 
+    @pytest.mark.asyncio
+    async def test_escapes_quotes_in_label_text(self):
+        from chimerax_mcp.server import label_atoms
+        mock_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
+            await label_atoms("#1/A:100", text='Active "Site"')
+            assert 'text "Active \\"Site\\""' in mock.call_args[0][0]
+
 
 class TestLabel2D:
     @pytest.mark.asyncio
@@ -402,7 +418,7 @@ class TestOpenSession:
         mock_result = make_result(logs={"info": ["Session restored"]})
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             result = await open_session("my_session.cxs")
-            assert "open my_session.cxs" == mock.call_args[0][0]
+            assert 'open "my_session.cxs"' == mock.call_args[0][0]
 
 
 class TestCreateSurface:
@@ -691,7 +707,7 @@ class TestRecordMovie:
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             await record_movie("encode", "out.mp4")
             cmd = mock.call_args[0][0]
-            assert "movie encode out.mp4" in cmd
+            assert 'movie encode "out.mp4"' in cmd
 
     @pytest.mark.asyncio
     async def test_invalid_action(self):
@@ -707,7 +723,7 @@ class TestManageScenes:
         mock_result = make_result()
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             await manage_scenes("save", "overview")
-            assert "scenes save overview" == mock.call_args[0][0]
+            assert 'scenes save "overview"' == mock.call_args[0][0]
 
     @pytest.mark.asyncio
     async def test_list_scenes(self):
@@ -848,7 +864,7 @@ class TestCombineModels:
             await combine_models("#1,2", name="merged", close_originals=True)
             cmd = mock.call_args[0][0]
             assert "combine #1,2" in cmd
-            assert "name merged" in cmd
+            assert 'name "merged"' in cmd
             assert "close true" in cmd
 
 
@@ -870,7 +886,7 @@ class TestShowCrosslinks:
         mock_result = make_result()
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             await show_crosslinks("xl_data.csv")
-            assert "crosslinks xl_data.csv" in mock.call_args[0][0]
+            assert 'crosslinks "xl_data.csv"' in mock.call_args[0][0]
 
 
 class TestShowCrystalContacts:
@@ -1299,7 +1315,7 @@ class TestLoadAttributes:
         mock_result = make_result()
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             await load_attributes("bfactors.defattr")
-            assert "defattr bfactors.defattr" == mock.call_args[0][0]
+            assert 'defattr "bfactors.defattr"' == mock.call_args[0][0]
 
 
 class TestFlyCamera:
@@ -1362,7 +1378,7 @@ class TestManageLog:
         mock_result = make_result()
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             await manage_log("save", "output.log")
-            assert "log save output.log" == mock.call_args[0][0]
+            assert 'log save "output.log"' == mock.call_args[0][0]
 
 
 class TestRunModeller:

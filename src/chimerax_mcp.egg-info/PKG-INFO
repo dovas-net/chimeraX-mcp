@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: chimerax-mcp
-Version: 0.1.0
+Version: 0.4.0
 Summary: MCP server for UCSF ChimeraX molecular visualization
 Author: ChimeraX MCP Contributors
 License-Expression: MIT
@@ -13,4 +13,3 @@ Requires-Dist: html2text>=2024.2.26
 Provides-Extra: dev
 Requires-Dist: pytest>=8.0; extra == "dev"
 Requires-Dist: pytest-asyncio>=0.23; extra == "dev"
-Requires-Dist: aioresponses>=0.7; extra == "dev"

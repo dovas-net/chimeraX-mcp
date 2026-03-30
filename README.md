@@ -27,7 +27,7 @@ Inspired by the [RBVI official ChimeraX MCP bridge](https://github.com/RBVI/Chim
 
 - [UCSF ChimeraX](https://www.cgl.ucsf.edu/chimerax/download.html) installed
 - Python 3.11+
-- [Claude Code CLI](https://claude.ai/code) or any MCP-compatible client
+- A local MCP client such as Claude Code, Claude Desktop, Codex, Cursor, VS Code, Gemini CLI, or similar
 
 ## Installation
 
@@ -38,15 +38,78 @@ python -m venv .venv && source .venv/bin/activate
 pip install -e .
 ```
 
+## Quick Start
+
+Check that ChimeraX is discoverable and see recommended next steps:
+
+```bash
+python -m chimerax_mcp doctor
+```
+
+List supported local clients:
+
+```bash
+python -m chimerax_mcp list-clients
+```
+
+Print a config snippet for a client without editing any files:
+
+```bash
+python -m chimerax_mcp print-config codex
+```
+
+Install or update a supported local client config automatically:
+
+```bash
+python -m chimerax_mcp setup codex
+python -m chimerax_mcp setup claude-desktop
+python -m chimerax_mcp setup cursor
+```
+
+Run the lighter-weight core tool profile directly:
+
+```bash
+python -m chimerax_mcp serve --profile core
+```
+
+## Platform Support
+
+This repository currently ships a **local stdio MCP server**. In practice, that means it works best with AI clients that can launch a local command on the user's machine.
+
+| Platform | Connection Model | Status | Notes |
+|----------|------------------|--------|-------|
+| Claude Code CLI | Local stdio MCP | Supported today | Best local setup path for Anthropic users |
+| Claude Desktop | Local MCP server | Supported today | Works with local server config; desktop extension packaging is not included yet |
+| OpenAI Codex CLI | Local stdio MCP | Supported today | Config is shared with the Codex IDE extension |
+| OpenAI Codex IDE extension | Local stdio MCP | Supported today | Uses the same `~/.codex/config.toml` as the CLI |
+| Cursor | Local stdio MCP | Supported today | Project-scoped or global config |
+| GitHub Copilot in VS Code | Local stdio MCP | Supported today | Tools appear in Agent mode |
+| Windsurf | Local stdio MCP | Supported with caveat | Windsurf has a 100-tool limit across all MCP servers; use the `core` profile |
+| Cline | Local stdio MCP | Supported today | Local config file |
+| Continue.dev | Local stdio MCP | Supported today | Agent mode only |
+| Gemini CLI | Local stdio MCP | Supported today | Local config file |
+| ChatGPT / ChatGPT Desktop | Remote MCP connector/app | Not supported by this repo alone | Requires a hosted remote MCP server, plus auth and possibly a local bridge if you want to control a local ChimeraX app |
+| Claude web / mobile remote connectors | Remote MCP connector | Not supported by this repo alone | Requires a hosted remote MCP server rather than a locally launched command |
+
 ## Setup
 
-Works with any MCP-compatible client. Pick yours:
+Choose the setup path that matches your client. The sections below are for platforms that can launch this repository as a **local MCP server**.
+
+For clients with configurable MCP timeouts, use **at least 600 seconds** to cover long-running tools such as structure prediction, Modeller, and Boltz.
+
+The easiest path is usually:
+
+```bash
+python -m chimerax_mcp setup <client-name>
+```
+
+Use `print-config` if you want to review the generated snippet first, and use `--path` if your config lives somewhere nonstandard.
 
 <details>
 <summary><b>Claude Code CLI</b></summary>
 
 ```bash
-claude mcp add chimerax -- /path/to/chimeraX-mcp/.venv/bin/python -m chimerax_mcp
+claude mcp add chimerax -- /path/to/chimeraX-mcp/.venv/bin/python -m chimerax_mcp serve
 ```
 </details>
 
@@ -60,7 +123,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
   "mcpServers": {
     "chimerax": {
       "command": "/path/to/chimeraX-mcp/.venv/bin/python",
-      "args": ["-m", "chimerax_mcp"]
+      "args": ["-m", "chimerax_mcp", "serve"]
     }
   }
 }
@@ -79,7 +142,7 @@ Create `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project):
   "mcpServers": {
     "chimerax": {
       "command": "/path/to/chimeraX-mcp/.venv/bin/python",
-      "args": ["-m", "chimerax_mcp"]
+      "args": ["-m", "chimerax_mcp", "serve"]
     }
   }
 }
@@ -99,7 +162,7 @@ Create `~/.config/Code/User/mcp.json` (global) or `.vscode/mcp.json` (project):
     "chimerax": {
       "type": "stdio",
       "command": "/path/to/chimeraX-mcp/.venv/bin/python",
-      "args": ["-m", "chimerax_mcp"]
+      "args": ["-m", "chimerax_mcp", "serve"]
     }
   }
 }
@@ -118,7 +181,7 @@ Edit `~/.codeium/windsurf/mcp_config.json`:
   "mcpServers": {
     "chimerax": {
       "command": "/path/to/chimeraX-mcp/.venv/bin/python",
-      "args": ["-m", "chimerax_mcp"]
+      "args": ["-m", "chimerax_mcp", "serve", "--profile", "core"]
     }
   }
 }
@@ -137,7 +200,7 @@ Open Cline panel > MCP Servers icon > "Configure MCP Servers", or edit directly:
   "mcpServers": {
     "chimerax": {
       "command": "/path/to/chimeraX-mcp/.venv/bin/python",
-      "args": ["-m", "chimerax_mcp"],
+      "args": ["-m", "chimerax_mcp", "serve"],
       "disabled": false
     }
   }
@@ -146,17 +209,19 @@ Open Cline panel > MCP Servers icon > "Configure MCP Servers", or edit directly:
 </details>
 
 <details>
-<summary><b>OpenAI Codex CLI</b></summary>
+<summary><b>OpenAI Codex (CLI + IDE Extension)</b></summary>
 
 Edit `~/.codex/config.toml` (note: TOML format, not JSON):
 
 ```toml
 [mcp_servers.chimerax]
 command = "/path/to/chimeraX-mcp/.venv/bin/python"
-args = ["-m", "chimerax_mcp"]
+args = ["-m", "chimerax_mcp", "serve"]
 enabled = true
-tool_timeout_sec = 90
+tool_timeout_sec = 600
 ```
+
+Codex shares this MCP configuration between the CLI and IDE extension, so you only need to set it up once.
 </details>
 
 <details>
@@ -169,8 +234,8 @@ Edit `~/.gemini/settings.json`:
   "mcpServers": {
     "chimerax": {
       "command": "/path/to/chimeraX-mcp/.venv/bin/python",
-      "args": ["-m", "chimerax_mcp"],
-      "timeout": 90000
+      "args": ["-m", "chimerax_mcp", "serve"],
+      "timeout": 600000
     }
   }
 }
@@ -191,12 +256,35 @@ mcpServers:
     args:
       - -m
       - chimerax_mcp
+      - serve
 ```
 
 Tools only available in **Agent mode**.
 </details>
 
-Replace `/path/to/chimeraX-mcp` with your actual install path. ChimeraX auto-launches when you first use a tool.
+<details>
+<summary><b>ChatGPT / ChatGPT Desktop</b></summary>
+
+ChatGPT custom connectors and apps use **remote MCP**, not a locally launched stdio command. This repository does **not** currently ship a hosted remote MCP service, so there is no direct ChatGPT install path yet.
+
+To support ChatGPT in the future, this project would need:
+
+- A hosted remote MCP endpoint
+- Authentication/OAuth as needed by the target surface
+- Optionally, a local bridge/companion app if remote ChatGPT should control a user's local ChimeraX GUI session
+
+If your goal is to use ChimeraX from ChatGPT today, this repository by itself is not enough.
+</details>
+
+<details>
+<summary><b>Claude Remote Connectors (claude.ai / mobile)</b></summary>
+
+Claude's remote connector surfaces also use **remote MCP**, not a local stdio command. This repository currently targets local MCP clients such as Claude Code and Claude Desktop.
+
+If you want Claude web or mobile support in the future, you would need to deploy a hosted remote MCP server for this project.
+</details>
+
+Replace `/path/to/chimeraX-mcp` with your actual install path. ChimeraX auto-launches when you first use a tool in supported local clients.
 
 ## Configuration
 

@@ -4,6 +4,7 @@ import asyncio
 import atexit
 import json
 import logging
+import os
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -21,6 +22,7 @@ import chimerax_mcp.chimera_rest as rest
 from chimerax_mcp.formatting import (
     format_chimerax_response,
     format_single_model_info,
+    quote_chimerax_arg,
     validate_atomspec,
 )
 from chimerax_mcp.docs import (
@@ -53,6 +55,44 @@ def _sync_cleanup():
 def main():
     atexit.register(_sync_cleanup)
     mcp.run()
+
+
+def _looks_like_local_path(value: str) -> bool:
+    """Heuristically detect when an open target is a local file path."""
+    if not value:
+        return False
+
+    text = str(value)
+    lower = text.lower()
+    known_extensions = (
+        ".pdb",
+        ".cif",
+        ".mmcif",
+        ".mrc",
+        ".map",
+        ".ccp4",
+        ".pdbqt",
+        ".cxs",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".tif",
+        ".tiff",
+        ".mp4",
+        ".mov",
+        ".avi",
+        ".csv",
+        ".defattr",
+    )
+
+    return (
+        text.startswith(("~", ".", os.sep))
+        or "/" in text
+        or "\\" in text
+        or any(char.isspace() for char in text)
+        or lower.endswith(known_extensions)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -624,7 +664,8 @@ async def open_structure(
         if format not in valid_formats:
             return f"Error: fetch_emdb_map=True only works with PDB or mmCIF formats. Specified format '{format}' is not compatible."
 
-    command = f"open {identifier}" if format == "auto-detect" else f"open {identifier} format {format}"
+    open_target = quote_chimerax_arg(identifier) if _looks_like_local_path(identifier) else identifier
+    command = f"open {open_target}" if format == "auto-detect" else f"open {open_target} format {format}"
     if fetch_emdb_map:
         command += " fetchEmdbMap true"
 
@@ -665,7 +706,10 @@ async def save_image(
         import time
         filename = f"/tmp/chimerax_{int(time.time())}.png"
 
-    command = f"save {filename} width {width} height {height} supersample {supersample}"
+    command = (
+        f"save {quote_chimerax_arg(filename)} width {width} height {height} "
+        f"supersample {supersample}"
+    )
     if transparent_background:
         command += " transparentBackground true"
 
@@ -1305,7 +1349,7 @@ async def label_atoms(
     else:
         command = f"label {atomspec}"
         if text:
-            command += f' text "{text}"'
+            command += f" text {quote_chimerax_arg(text)}"
         if attribute:
             command += f" attribute {attribute}"
         command += f" height {height}"
@@ -1342,7 +1386,10 @@ async def label_2d(
         color: Text color (default: 'white')
         session_id: ChimeraX session port (defaults to primary session)
     """
-    command = f'2dlabels text "{text}" xpos {x} ypos {y} size {size} color {color}'
+    command = (
+        f"2dlabels text {quote_chimerax_arg(text)} xpos {x} ypos {y} "
+        f"size {size} color {color}"
+    )
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Added 2D label: \"{text}\"")
 
@@ -1363,7 +1410,7 @@ async def save_session(
     """
     if not filename.endswith(".cxs"):
         filename += ".cxs"
-    command = f"save {filename}"
+    command = f"save {quote_chimerax_arg(filename)}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Session saved: {filename}")
 
@@ -1382,7 +1429,7 @@ async def open_session(
         filename: Path to the session file (e.g., '~/my_session.cxs')
         session_id: ChimeraX session port (defaults to primary session)
     """
-    command = f"open {filename}"
+    command = f"open {quote_chimerax_arg(filename)}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Session opened: {filename}")
 
@@ -1838,7 +1885,10 @@ async def record_movie(
     elif action == "encode":
         if not filename:
             filename = "/tmp/chimerax_movie.mp4"
-        command = f"movie encode {filename} framerate {framerate} format {format}"
+        command = (
+            f"movie encode {quote_chimerax_arg(filename)} framerate {framerate} "
+            f"format {format}"
+        )
     else:
         raise ValueError(f"Action must be 'record', 'stop', or 'encode', got '{action}'")
     result = await run_chimerax_command(command, session_id, timeout=300)
@@ -1867,7 +1917,7 @@ async def manage_scenes(
     elif action in ("save", "restore", "delete"):
         if not name:
             raise ValueError(f"Scene name required for '{action}'")
-        command = f"scenes {action} {name}"
+        command = f"scenes {action} {quote_chimerax_arg(name)}"
     else:
         raise ValueError(f"Action must be 'save', 'restore', 'list', or 'delete'")
     result = await run_chimerax_command(command, session_id)
@@ -1896,7 +1946,7 @@ async def apply_preset(
             Note: use full names to avoid ambiguity (e.g., 'publication 1' not 'publication')
         session_id: ChimeraX session port (defaults to primary session)
     """
-    command = f'preset "{preset_name}"'
+    command = f"preset {quote_chimerax_arg(preset_name)}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Applied preset: {preset_name}")
 
@@ -2128,7 +2178,7 @@ async def combine_models(
     """
     command = f"combine {models}"
     if name:
-        command += f" name {name}"
+        command += f" name {quote_chimerax_arg(name)}"
     if close_originals:
         command += " close true"
     result = await run_chimerax_command(command, session_id)
@@ -2183,7 +2233,7 @@ async def show_crosslinks(
         radius: Pseudobond radius (default: 0.5)
         session_id: ChimeraX session port (defaults to primary session)
     """
-    command = f"crosslinks {filename} color {color} radius {radius}"
+    command = f"crosslinks {quote_chimerax_arg(filename)} color {color} radius {radius}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Crosslinks loaded from {filename}")
 
@@ -2313,7 +2363,7 @@ async def rename_model(
         session_id: ChimeraX session port (defaults to primary session)
     """
     model = validate_atomspec(model)
-    command = f'rename {model} "{new_name}"'
+    command = f"rename {model} {quote_chimerax_arg(new_name)}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Renamed {model} to '{new_name}'")
 
@@ -3018,7 +3068,7 @@ async def load_attributes(
         filename: Path to the attributes file (.defattr format)
         session_id: ChimeraX session port (defaults to primary session)
     """
-    command = f"defattr {filename}"
+    command = f"defattr {quote_chimerax_arg(filename)}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Loaded attributes from {filename}")
 
@@ -3158,7 +3208,7 @@ async def manage_log(
         session_id: ChimeraX session port (defaults to primary session)
     """
     if action == "save" and filename:
-        command = f"log save {filename}"
+        command = f"log save {quote_chimerax_arg(filename)}"
     elif action in ("show", "hide", "clear", "errors"):
         command = f"log {action}"
     else:

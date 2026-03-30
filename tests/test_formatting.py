@@ -1,4 +1,9 @@
-from chimerax_mcp.formatting import format_chimerax_response, add_error_hints, format_single_model_info
+from chimerax_mcp.formatting import (
+    add_error_hints,
+    format_chimerax_response,
+    format_single_model_info,
+    quote_chimerax_arg,
+)
 
 
 class TestFormatChimeraXResponse:
@@ -106,6 +111,15 @@ class TestAddErrorHints:
         msg = add_error_hints("UserError", "no atoms matched specification", "select #1/Z")
         assert "list_models()" in msg
         assert "chain IDs" in msg
+
+
+class TestQuoteChimeraXArg:
+    def test_wraps_with_quotes(self):
+        assert quote_chimerax_arg("My File.cxs") == '"My File.cxs"'
+
+    def test_escapes_quotes_and_backslashes(self):
+        value = 'C:\\Users\\docas\\"quoted".pdb'
+        assert quote_chimerax_arg(value) == '"C:\\\\Users\\\\docas\\\\\\"quoted\\".pdb"'
 
 
 class TestFormatSingleModelInfo:

@@ -29,47 +29,56 @@ Inspired by the [RBVI official ChimeraX MCP bridge](https://github.com/RBVI/Chim
 - Python 3.11+
 - A local MCP client such as Claude Code, Claude Desktop, Codex, Cursor, VS Code, Gemini CLI, or similar
 
-## Installation
+## Quick Install (Codex Desktop, Codex CLI, and more)
 
 ```bash
 git clone https://github.com/BenWertoski/chimeraX-mcp.git
 cd chimeraX-mcp
-python -m venv .venv && source .venv/bin/activate
-pip install -e .
+./install.sh
 ```
 
-## Quick Start
+That's it. The script creates a Python venv in `.venv/`, installs the package, writes the MCP config for Codex (shared by **Codex Desktop** and the **Codex CLI** via `~/.codex/config.toml`), and runs a `doctor` check.
 
-Check that ChimeraX is discoverable and see recommended next steps:
+**After the script finishes, fully quit Codex Desktop (⌘Q — not just closing the window) and reopen it.** The ChimeraX tools will appear on the next launch.
+
+Install for a different client instead:
 
 ```bash
-python -m chimerax_mcp doctor
+./install.sh claude-desktop
+./install.sh cursor
+./install.sh claude-code
+./install.sh copilot
+./install.sh gemini
+./install.sh cline
+./install.sh continue
+./install.sh windsurf
 ```
 
-List supported local clients:
+> **Windows users:** `install.sh` is bash-only. Follow the [Manual Installation](#manual-installation) steps below in PowerShell.
+
+### Manual Installation
+
+If you'd rather drive each step yourself or you're developing the server:
 
 ```bash
-python -m chimerax_mcp list-clients
+git clone https://github.com/BenWertoski/chimeraX-mcp.git
+cd chimeraX-mcp
+python3 -m venv .venv && source .venv/bin/activate
+pip install .                    # or `pip install -e ".[dev]"` for development
+chimerax-mcp setup codex         # or any other client name
 ```
 
-Print a config snippet for a client without editing any files:
+## Commands
+
+Once installed, these commands are available inside the venv (or via `./.venv/bin/chimerax-mcp`):
 
 ```bash
-python -m chimerax_mcp print-config codex
-```
-
-Install or update a supported local client config automatically:
-
-```bash
-python -m chimerax_mcp setup codex
-python -m chimerax_mcp setup claude-desktop
-python -m chimerax_mcp setup cursor
-```
-
-Run the lighter-weight core tool profile directly:
-
-```bash
-python -m chimerax_mcp serve --profile core
+chimerax-mcp doctor                       # inspect environment + ChimeraX availability
+chimerax-mcp list-clients                 # list supported local clients
+chimerax-mcp print-config codex           # preview a config snippet without writing
+chimerax-mcp setup codex                  # write/update a client's MCP config
+chimerax-mcp serve                        # run the MCP server (used by clients)
+chimerax-mcp serve --profile core         # lighter tool profile (~45 tools)
 ```
 
 ## Platform Support
@@ -80,8 +89,9 @@ This repository currently ships a **local stdio MCP server**. In practice, that 
 |----------|------------------|--------|-------|
 | Claude Code CLI | Local stdio MCP | Supported today | Best local setup path for Anthropic users |
 | Claude Desktop | Local MCP server | Supported today | Works with local server config; desktop extension packaging is not included yet |
-| OpenAI Codex CLI | Local stdio MCP | Supported today | Config is shared with the Codex IDE extension |
-| OpenAI Codex IDE extension | Local stdio MCP | Supported today | Uses the same `~/.codex/config.toml` as the CLI |
+| OpenAI Codex Desktop (`Codex.app`) | Local stdio MCP | Supported today | Shares `~/.codex/config.toml` with the Codex CLI and IDE extension |
+| OpenAI Codex CLI | Local stdio MCP | Supported today | Config is shared with Codex Desktop and the IDE extension |
+| OpenAI Codex IDE extension | Local stdio MCP | Supported today | Uses the same `~/.codex/config.toml` as the CLI / desktop app |
 | Cursor | Local stdio MCP | Supported today | Project-scoped or global config |
 | GitHub Copilot in VS Code | Local stdio MCP | Supported today | Tools appear in Agent mode |
 | Windsurf | Local stdio MCP | Supported with caveat | Windsurf has a 100-tool limit across all MCP servers; use the `core` profile |
@@ -97,13 +107,13 @@ Choose the setup path that matches your client. The sections below are for platf
 
 For clients with configurable MCP timeouts, use **at least 600 seconds** to cover long-running tools such as structure prediction, Modeller, and Boltz.
 
-The easiest path is usually:
+For a first-time install, `./install.sh <client-name>` handles everything in one step (see [Quick Install](#quick-install-codex-desktop-codex-cli-and-more)). To add another client after you've already installed once, or to re-sync the config, use:
 
 ```bash
-python -m chimerax_mcp setup <client-name>
+chimerax-mcp setup <client-name>
 ```
 
-Use `print-config` if you want to review the generated snippet first, and use `--path` if your config lives somewhere nonstandard.
+Use `chimerax-mcp print-config <client-name>` to review the generated snippet first, and pass `--path` if your config lives somewhere nonstandard.
 
 <details>
 <summary><b>Claude Code CLI</b></summary>
@@ -209,9 +219,11 @@ Open Cline panel > MCP Servers icon > "Configure MCP Servers", or edit directly:
 </details>
 
 <details>
-<summary><b>OpenAI Codex (CLI + IDE Extension)</b></summary>
+<summary><b>OpenAI Codex (Desktop app, CLI, and IDE extension)</b></summary>
 
-Edit `~/.codex/config.toml` (note: TOML format, not JSON):
+The easiest path is `./install.sh` (see [Quick Install](#quick-install-codex-desktop-codex-cli-and-more) above) — it writes the config block below for you.
+
+If you'd rather edit the file by hand, open `~/.codex/config.toml` (note: TOML format, not JSON) and append:
 
 ```toml
 [mcp_servers.chimerax]
@@ -221,7 +233,7 @@ enabled = true
 tool_timeout_sec = 600
 ```
 
-Codex shares this MCP configuration between the CLI and IDE extension, so you only need to set it up once.
+The Codex Desktop app (`Codex.app`), the Codex CLI, and the Codex IDE extension all read this same file, so one entry covers all three. Fully quit and reopen the Codex app (⌘Q) after editing.
 </details>
 
 <details>

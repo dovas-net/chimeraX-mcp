@@ -86,9 +86,10 @@ async def _doctor_report() -> tuple[int, str]:
 
         lines.append("")
         lines.append("Recommended next steps:")
-        lines.append("  1. Run `python -m chimerax_mcp print-config codex` to generate a client snippet.")
-        lines.append("  2. Run `python -m chimerax_mcp setup codex` to install into a supported local client config.")
-        lines.append("  3. Use `python -m chimerax_mcp serve --profile core` for lighter clients such as Windsurf.")
+        lines.append("  1. For a first-time install, run `./install.sh <client-name>` from the repo root.")
+        lines.append("  2. To preview a config snippet without writing, run `chimerax-mcp print-config codex`.")
+        lines.append("  3. To add or re-sync a client config, run `chimerax-mcp setup <client-name>`.")
+        lines.append("  4. For lighter clients (Windsurf), use `chimerax-mcp serve --profile core`.")
 
         exit_code = 0 if exe or found_existing else 1
         return exit_code, "\n".join(lines)
@@ -101,6 +102,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="chimerax-mcp",
         description="Run or configure the ChimeraX MCP server.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"chimerax-mcp {__version__}",
     )
     subparsers = parser.add_subparsers(dest="command")
 

@@ -7,6 +7,7 @@ import os
 import re
 import shlex
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -71,6 +72,27 @@ def default_profile_for_client(client: str) -> str:
     return "core" if client == "windsurf" else "full"
 
 
+def _prefer_venv_python_symlink(python_path: str) -> str:
+    """Prefer `.venv/bin/python` over `.venv/bin/python3.X` when both point to the same binary.
+
+    `sys.executable` on macOS and Linux reports the fully-versioned name
+    (e.g. `.../python3.14`). If the user later rebuilds their venv with a
+    newer interpreter, a config pinned to `python3.14` breaks. The bare
+    `python` symlink in the same directory is the stable handle.
+    """
+    try:
+        p = Path(python_path)
+        name = p.name
+        if not name.startswith("python") or name == "python":
+            return python_path
+        symlink = p.parent / "python"
+        if symlink.exists() and symlink.resolve() == p.resolve():
+            return str(symlink)
+    except OSError:
+        pass
+    return python_path
+
+
 def build_stdio_command(
     profile: str = "full",
     python_path: str | None = None,
@@ -79,7 +101,8 @@ def build_stdio_command(
     if profile not in SUPPORTED_PROFILES:
         raise ValueError(f"Profile must be one of {SUPPORTED_PROFILES}")
 
-    command = str(Path(python_path or sys.executable).expanduser())
+    resolved = str(Path(python_path or sys.executable).expanduser())
+    command = _prefer_venv_python_symlink(resolved)
     args = ["-m", "chimerax_mcp", "serve"]
     if profile == "core":
         args.extend(["--profile", "core"])
@@ -220,6 +243,42 @@ def render_config_for_client(
     raise ValueError(f"No config renderer implemented for client '{client}'")
 
 
+def _atomic_write(path: Path, content: str) -> None:
+    """Write text to `path` atomically, preserving the existing file's mode if any.
+
+    Uses a temp file in the same directory so the final `os.replace` is atomic
+    on POSIX (same filesystem, same inode-directory). If a file already exists
+    at `path`, its permission bits are carried over to the replacement so that
+    e.g. a 0600 `~/.codex/config.toml` stays 0600 after upsert.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    existing_mode: int | None = None
+    try:
+        existing_mode = path.stat().st_mode & 0o777
+    except FileNotFoundError:
+        pass
+
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=str(path.parent),
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        if existing_mode is not None:
+            os.chmod(tmp_path, existing_mode)
+        os.replace(tmp_path, path)
+    except BaseException:
+        try:
+            tmp_path.unlink()
+        except FileNotFoundError:
+            pass
+        raise
+
+
 def _upsert_json_config(
     path: Path,
     client: str,
@@ -241,14 +300,12 @@ def _upsert_json_config(
     existing_root.update(server_config)
     data[root_key] = existing_root
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    _atomic_write(path, json.dumps(data, indent=2) + "\n")
 
 
 def _upsert_toml_section(path: Path, section_name: str, section_body: str) -> None:
     """Replace or append a TOML section by name."""
     text = path.read_text(encoding="utf-8") if path.exists() else ""
-    section_header = f"[{section_name}]"
     replacement = section_body.strip() + "\n"
     pattern = re.compile(
         rf"(?ms)^\[{re.escape(section_name)}\]\n.*?(?=^\[|\Z)"
@@ -262,17 +319,15 @@ def _upsert_toml_section(path: Path, section_name: str, section_body: str) -> No
             updated += "\n\n"
         updated += replacement
 
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(updated, encoding="utf-8")
+    _atomic_write(path, updated)
 
 
 def _upsert_continue_yaml(path: Path, command: str, args: list[str]) -> None:
     """Append a Continue config block when one does not already exist."""
     block = _render_continue_yaml(command, args)
-    path.parent.mkdir(parents=True, exist_ok=True)
 
     if not path.exists():
-        path.write_text(block, encoding="utf-8")
+        _atomic_write(path, block)
         return
 
     text = path.read_text(encoding="utf-8")
@@ -291,7 +346,7 @@ def _upsert_continue_yaml(path: Path, command: str, args: list[str]) -> None:
         updated = text.rstrip() + "\n" + entry
     else:
         updated = text.rstrip() + "\n\n" + block
-    path.write_text(updated, encoding="utf-8")
+    _atomic_write(path, updated)
 
 
 def setup_client_config(

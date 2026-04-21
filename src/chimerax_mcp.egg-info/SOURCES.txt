@@ -1,8 +1,9 @@
+README.md
 pyproject.toml
 src/chimerax_mcp/__init__.py
 src/chimerax_mcp/__main__.py
-src/chimerax_mcp/cli.py
 src/chimerax_mcp/chimera_rest.py
+src/chimerax_mcp/cli.py
 src/chimerax_mcp/client_setup.py
 src/chimerax_mcp/core_server.py
 src/chimerax_mcp/docs.py

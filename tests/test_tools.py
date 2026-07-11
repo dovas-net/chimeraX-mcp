@@ -167,9 +167,12 @@ class TestShowHideObjects:
         select_result = make_result(logs={"note": ["Selected items:", "123 atoms, 120 bonds selected"]})
         show_result = make_result()
         model_result = make_result()
-        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, side_effect=[select_result, show_result, model_result]):
+        deselect_result = make_result()
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, side_effect=[select_result, show_result, model_result, deselect_result]) as mock:
             result = await show_hide_objects("show", "#1", "ab")
             assert "123 atoms" in result
+            # The feedback selection must be cleared so renders don't show green highlights
+            assert mock.call_args_list[-1][0][0] == "~select"
 
     @pytest.mark.asyncio
     async def test_invalid_action(self):
@@ -1583,6 +1586,9 @@ class TestSetScene:
         with patch("chimerax_mcp.server.run_chimerax_command", side_effect=mock_run):
             await set_scene(background="black", lighting="soft", silhouettes=True, camera="orthographic")
             assert len(calls) == 4
+            # 'orthographic' must be mapped to ChimeraX's native 'ortho' camera mode
+            assert "camera ortho" in calls
+            assert "camera orthographic" not in calls
 
 
 class TestCloseModels:

@@ -793,6 +793,10 @@ async def show_hide_objects(
             "logs": combined_logs,
         }
 
+    # Clear the feedback selection so it does not leave green highlights in
+    # subsequent renders (see the save_image guidance about clearing selection).
+    await run_chimerax_command("~select", session_id)
+
     context = f"Success: {command}\nThis action affected {counts_string}"
     return format_chimerax_response(result, context)
 
@@ -926,7 +930,8 @@ async def set_scene(
         background: Background color (e.g., 'white', 'black', '#f0f0f0')
         lighting: Lighting preset ('default', 'soft', 'full', 'flat')
         silhouettes: Enable edge outlines (True/False)
-        camera: Camera type ('perspective' or 'orthographic')
+        camera: Camera type - 'perspective' (mono) or 'orthographic' (ortho);
+            native ChimeraX modes ('mono', 'ortho', '360', 'stereo') also accepted
         session_id: ChimeraX session port (defaults to primary session)
     """
     commands = []
@@ -937,7 +942,12 @@ async def set_scene(
     if silhouettes is not None:
         commands.append(f"set silhouettes {'true' if silhouettes else 'false'}")
     if camera is not None:
-        commands.append(f"camera {camera}")
+        # ChimeraX's `camera` command uses 'mono'/'ortho', not the human-friendly
+        # 'perspective'/'orthographic' this tool documents — map them.
+        camera_mode = {"perspective": "mono", "orthographic": "ortho"}.get(
+            camera.lower(), camera
+        )
+        commands.append(f"camera {camera_mode}")
 
     if not commands:
         return "No scene properties specified. Provide at least one of: background, lighting, silhouettes, camera."

@@ -79,11 +79,15 @@ def _prefer_venv_python_symlink(python_path: str) -> str:
     (e.g. `.../python3.14`). If the user later rebuilds their venv with a
     newer interpreter, a config pinned to `python3.14` breaks. The bare
     `python` symlink in the same directory is the stable handle.
+
+    Only *fully-versioned* names (`python3.14`) are rewritten. Bare `python`
+    and `python3` are already stable handles, so an explicitly-provided path
+    like `/usr/bin/python3` is preserved verbatim.
     """
     try:
         p = Path(python_path)
         name = p.name
-        if not name.startswith("python") or name == "python":
+        if not re.match(r"^python\d+\.\d", name):
             return python_path
         symlink = p.parent / "python"
         if symlink.exists() and symlink.resolve() == p.resolve():

@@ -32,7 +32,7 @@ Inspired by the [RBVI official ChimeraX MCP bridge](https://github.com/RBVI/Chim
 ## Quick Install (Codex Desktop, Codex CLI, and more)
 
 ```bash
-git clone https://github.com/BenWertoski/chimeraX-mcp.git
+git clone https://github.com/dovas-net/chimeraX-mcp.git
 cd chimeraX-mcp
 ./install.sh
 ```
@@ -61,7 +61,7 @@ Install for a different client instead:
 If you'd rather drive each step yourself or you're developing the server:
 
 ```bash
-git clone https://github.com/BenWertoski/chimeraX-mcp.git
+git clone https://github.com/dovas-net/chimeraX-mcp.git
 cd chimeraX-mcp
 python3 -m venv .venv && source .venv/bin/activate
 pip install .                    # or `pip install -e ".[dev]"` for development

@@ -136,7 +136,8 @@ class TestSaveImage:
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             result = await save_image()
             cmd = mock.call_args[0][0]
-            assert "/tmp/chimerax_" in cmd
+            import os, tempfile
+            assert os.path.join(tempfile.gettempdir(), "chimerax_") in cmd
             assert ".png" in cmd
 
     @pytest.mark.asyncio
@@ -1753,3 +1754,95 @@ class TestMeasureMapStats:
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result):
             result = await measure_map_stats("#2")
             assert "1.5" in result
+
+
+# ===================================================================
+# Regression tests: model-id normalisation, validation order, cleanup
+# ===================================================================
+
+
+class TestModelIdNormalisation:
+    """Tools taking a bare model ID must accept '#1' without producing '##1'."""
+
+    @pytest.mark.asyncio
+    async def test_get_model_info_accepts_hash_prefix(self):
+        from chimerax_mcp.server import get_model_info
+        calls = []
+
+        async def mock_run(cmd, port=None, timeout=None):
+            calls.append(cmd)
+            return make_result(json_values=[json.dumps([{"spec": "#1", "value": "1abc"}])])
+
+        with patch("chimerax_mcp.server.run_chimerax_command", side_effect=mock_run):
+            await get_model_info("#1")
+        assert calls[0] == "info models #1"
+        assert not any("##" in c for c in calls)
+
+    @pytest.mark.asyncio
+    async def test_get_sequence_and_chain_info_accept_prefixes(self):
+        from chimerax_mcp.server import get_sequence, get_chain_info
+        chain_data = json.dumps([{"value": "A", "polymer type": "protein", "sequence": "MK", "residues": []}])
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock,
+                   return_value=make_result(json_values=[chain_data])) as mock:
+            result = await get_sequence("#1", "/A")
+            assert mock.call_args[0][0] == "info chains #1/A"
+            assert "Model #1 " in result
+            await get_chain_info(" #2 ", "B")
+            assert mock.call_args[0][0] == "info chains #2/B"
+
+    @pytest.mark.asyncio
+    async def test_view_residue_accepts_prefixes(self):
+        from chimerax_mcp.server import view_residue
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock,
+                   return_value=make_result()) as mock:
+            await view_residue("#1", "/A", ":100")
+        assert [c[0][0] for c in mock.call_args_list] == ["view #1/A:100", "cofr #1/A:100"]
+
+    @pytest.mark.asyncio
+    async def test_empty_model_id_rejected(self):
+        from chimerax_mcp.server import get_model_info
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock) as mock:
+            with pytest.raises(ValueError, match="Model ID"):
+                await get_model_info("#")
+        mock.assert_not_called()
+
+
+class TestValidationBeforeSideEffects:
+    @pytest.mark.asyncio
+    async def test_set_cartoon_bad_xsection_runs_nothing(self):
+        from chimerax_mcp.server import set_cartoon
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock) as mock:
+            with pytest.raises(ValueError, match="xsection"):
+                await set_cartoon("#1", xsection="triangle")
+        mock.assert_not_called()
+
+
+class TestShowHideCleanup:
+    @pytest.mark.asyncio
+    async def test_selection_cleared_when_show_fails(self):
+        from chimerax_mcp.server import show_hide_objects
+        calls = []
+
+        async def mock_run(cmd, port=None, timeout=None):
+            calls.append(cmd)
+            if cmd.startswith("show "):
+                raise Exception("UserError: boom")
+            return make_result(logs={"note": ["12 atoms selected"]})
+
+        with patch("chimerax_mcp.server.run_chimerax_command", side_effect=mock_run):
+            with pytest.raises(Exception, match="boom"):
+                await show_hide_objects("show", "#1", "a")
+        assert calls[-1] == "~select"
+
+
+class TestDefaultOutputPaths:
+    @pytest.mark.asyncio
+    async def test_record_movie_encode_default_uses_temp_dir(self):
+        import os, tempfile
+        from chimerax_mcp.server import record_movie
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock,
+                   return_value=make_result()) as mock:
+            await record_movie("encode")
+        cmd = mock.call_args[0][0]
+        assert os.path.join(tempfile.gettempdir(), "chimerax_movie_") in cmd
+        assert cmd.split('"')[1].endswith(".mp4")

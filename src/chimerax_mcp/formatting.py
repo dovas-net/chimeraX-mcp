@@ -6,22 +6,11 @@ import re
 
 logger = logging.getLogger("chimerax_mcp.formatting")
 
-# Patterns that suggest suspicious input (not shell injection — ChimeraX command abuse)
-_SUSPICIOUS_PATTERNS = [
-    "runscript",
-    "open.*\\.py",
-    "import os",
-    "import sys",
-    "exec(",
-    "eval(",
-]
-
 
 def validate_atomspec(spec: str) -> str:
     """Validate and clean an atomspec string.
 
-    Strips whitespace, rejects empty strings, and warns on suspicious patterns.
-    Returns the cleaned spec.
+    Strips whitespace and rejects empty strings. Returns the cleaned spec.
     """
     if spec is None:
         raise ValueError("Atomspec cannot be None")

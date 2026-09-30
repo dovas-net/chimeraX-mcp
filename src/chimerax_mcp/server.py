@@ -57,6 +57,29 @@ def main():
     mcp.run()
 
 
+def _model_spec(model_id) -> str:
+    """Normalize a model ID to an atomspec: '1', '#1' and ' #1 ' all give '#1'.
+
+    Tools taking a bare model ID used to prepend '#' blindly, so a caller
+    passing '#1' (the form most other tools use) produced '##1', which ChimeraX
+    parses as a model *attribute* test.
+    """
+    text = str(model_id).strip().lstrip("#")
+    if not text:
+        raise ValueError("Model ID cannot be empty")
+    return f"#{text}"
+
+
+def _default_output_path(prefix: str, extension: str) -> str:
+    """Timestamped path in the platform temp dir (not a hard-coded /tmp)."""
+    import tempfile
+    import time
+
+    now = time.time()
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.localtime(now)) + f"-{int(now * 1000) % 1000:03d}"
+    return os.path.join(tempfile.gettempdir(), f"{prefix}_{stamp}{extension}")
+
+
 def _looks_like_local_path(value: str) -> bool:
     """Heuristically detect when an open target is a local file path."""
     if not value:
@@ -206,8 +229,10 @@ async def _get_chain_info_helper(
 
     Returns (formatted_text, chain_data_dict).
     """
+    model_spec = _model_spec(model_id)
+    chain_id = str(chain_id).strip().lstrip("/")
     result = await run_chimerax_command(
-        f"info chains #{model_id}/{chain_id}", session_id
+        f"info chains {model_spec}/{chain_id}", session_id
     )
     rows = parse_info_json(result)
 
@@ -228,7 +253,7 @@ async def _get_chain_info_helper(
     # Format the chain info
     seq_len = len(chain_data["sequence"])
     lines = [
-        f"Chain {chain_data['chain_id']} of model #{model_id}:",
+        f"Chain {chain_data['chain_id']} of model {model_spec}:",
         f"  Polymer type: {chain_data['polymer_type']}",
         f"  Residues: {chain_data['num_residues']}",
         f"  Sequence length: {seq_len}",
@@ -342,7 +367,7 @@ async def get_model_info(
         model_id: Model identifier (e.g., '1' for model #1)
         session_id: ChimeraX session port (defaults to primary session)
     """
-    spec = f"#{model_id}"
+    spec = _model_spec(model_id)
     model_data: dict = {"spec": spec}
 
     # Query 1: name + class
@@ -468,7 +493,9 @@ async def view_residue(
         residue: Residue number (e.g., '100')
         session_id: ChimeraX session port (defaults to primary session)
     """
-    spec = f"#{model}/{chain}:{residue}"
+    chain = str(chain).strip().lstrip("/")
+    residue = str(residue).strip().lstrip(":")
+    spec = f"{_model_spec(model)}/{chain}:{residue}"
 
     # Center view on residue
     await run_chimerax_command(f"view {spec}", session_id)
@@ -695,7 +722,7 @@ async def save_image(
     Before saving, clear selection with run_command('~select') to avoid green highlights.
 
     Args:
-        filename: Output filename (e.g., 'structure.png'). If empty, auto-generates a timestamped name in /tmp.
+        filename: Output filename (e.g., 'structure.png'). If empty, auto-generates a timestamped name in the system temp directory.
         width: Image width in pixels (default: 1920)
         height: Image height in pixels (default: 1080)
         supersample: Supersampling factor for higher quality (default: 3)
@@ -703,8 +730,7 @@ async def save_image(
         session_id: ChimeraX session port (defaults to primary session)
     """
     if not filename:
-        import time
-        filename = f"/tmp/chimerax_{int(time.time())}.png"
+        filename = _default_output_path("chimerax", ".png")
 
     command = (
         f"save {quote_chimerax_arg(filename)} width {width} height {height} "
@@ -778,24 +804,26 @@ async def show_hide_objects(
         raise ValueError(f"No objects found matching atomspec: {atomspec}")
 
     command = f"{action} {atomspec} target {target}"
-    result = await run_chimerax_command(command, session_id)
+    try:
+        result = await run_chimerax_command(command, session_id)
 
-    if action == "show":
-        model_result = await run_chimerax_command(f"show {atomspec} target m", session_id)
-        # Merge logs
-        combined_logs = {}
-        for res in [result, model_result]:
-            for level, messages in res.get("logs", {}).items():
-                combined_logs.setdefault(level, []).extend(messages)
-        result = {
-            "return_values": result.get("return_values", []) + model_result.get("return_values", []),
-            "json_values": result.get("json_values", []) + model_result.get("json_values", []),
-            "logs": combined_logs,
-        }
-
-    # Clear the feedback selection so it does not leave green highlights in
-    # subsequent renders (see the save_image guidance about clearing selection).
-    await run_chimerax_command("~select", session_id)
+        if action == "show":
+            model_result = await run_chimerax_command(f"show {atomspec} target m", session_id)
+            # Merge logs
+            combined_logs = {}
+            for res in [result, model_result]:
+                for level, messages in res.get("logs", {}).items():
+                    combined_logs.setdefault(level, []).extend(messages)
+            result = {
+                "return_values": result.get("return_values", []) + model_result.get("return_values", []),
+                "json_values": result.get("json_values", []) + model_result.get("json_values", []),
+                "logs": combined_logs,
+            }
+    finally:
+        # Clear the feedback selection so it does not leave green highlights in
+        # subsequent renders (see the save_image guidance about clearing selection),
+        # even when the show/hide command itself failed.
+        await run_chimerax_command("~select", session_id)
 
     context = f"Success: {command}\nThis action affected {counts_string}"
     return format_chimerax_response(result, context)
@@ -1124,10 +1152,12 @@ async def get_sequence(model_id: str, chain_id: str, session_id: Optional[int] =
         chain_id: Chain identifier (e.g., 'A')
         session_id: ChimeraX session port (defaults to primary session)
     """
-    result = await run_chimerax_command(f"info chains #{model_id}/{chain_id}", session_id)
+    model_spec = _model_spec(model_id)
+    chain_id = str(chain_id).strip().lstrip("/")
+    result = await run_chimerax_command(f"info chains {model_spec}/{chain_id}", session_id)
     rows = parse_info_json(result)
     if not rows:
-        return f"No sequence data for chain {chain_id} in model #{model_id}"
+        return f"No sequence data for chain {chain_id} in model {model_spec}"
 
     row = rows[0]
     sequence = row.get("sequence", "")
@@ -1137,7 +1167,7 @@ async def get_sequence(model_id: str, chain_id: str, session_id: Optional[int] =
     if not sequence:
         return f"Chain {chain_name} has no sequence data"
 
-    header = f">Chain {chain_name} | Model #{model_id} | {polymer_type} | {len(sequence)} residues"
+    header = f">Chain {chain_name} | Model {model_spec} | {polymer_type} | {len(sequence)} residues"
     seq_lines = [sequence[i:i+80] for i in range(0, len(sequence), 80)]
     return header + "\n" + "\n".join(seq_lines)
 
@@ -1615,6 +1645,9 @@ async def set_cartoon(
         hide_backbone: Hide backbone atoms when showing cartoon (default: True)
         session_id: ChimeraX session port (defaults to primary session)
     """
+    if xsection and xsection not in ("oval", "rectangle", "barbell"):
+        raise ValueError(f"xsection must be 'oval', 'rectangle', or 'barbell', got '{xsection}'")
+
     # Show the cartoon
     command = f"cartoon {target}"
     if hide_backbone:
@@ -1623,8 +1656,6 @@ async def set_cartoon(
 
     # Apply style as a separate subcommand if requested
     if xsection:
-        if xsection not in ("oval", "rectangle", "barbell"):
-            raise ValueError(f"xsection must be 'oval', 'rectangle', or 'barbell'")
         await run_chimerax_command(f"cartoon style {target} xsection {xsection}", session_id)
 
     return format_chimerax_response(result, f"Cartoon set for {target}")
@@ -1894,7 +1925,7 @@ async def record_movie(
         command = "movie stop"
     elif action == "encode":
         if not filename:
-            filename = "/tmp/chimerax_movie.mp4"
+            filename = _default_output_path("chimerax_movie", ".mp4")
         command = (
             f"movie encode {quote_chimerax_arg(filename)} framerate {framerate} "
             f"format {format}"

@@ -8,12 +8,14 @@ Standalone MCP server connecting Claude Code CLI to UCSF ChimeraX for molecular 
 Claude Code CLI → MCP (stdio) → chimerax-mcp (Python) → HTTP REST → ChimeraX
 ```
 
-- `src/chimerax_mcp/server.py` — FastMCP instance, all 48 tool definitions, `main()` entry point
+- `src/chimerax_mcp/server.py` — FastMCP instance, all 119 tool definitions, `main()` entry point
 - `src/chimerax_mcp/chimera_rest.py` — REST client, auto-launch, instance discovery, `run_chimerax_command()`, `parse_info_json()`, env var config
 - `src/chimerax_mcp/formatting.py` — response formatting, error hints, `validate_atomspec()`, logging
 - `src/chimerax_mcp/docs.py` — atomspec guide, command doc lookup (HTML→markdown), ChimeraX installation discovery
 
 ## Development
+
+`mcp` is pinned `<2`: mcp 2.x removed `mcp.server.fastmcp`.
 
 ```bash
 # Setup
@@ -42,6 +44,8 @@ claude mcp add chimerax -- .venv/bin/python -m chimerax_mcp
 - All tools are `async def` decorated with `@mcp.tool()` in `server.py`
 - Tools call `run_chimerax_command(command, session_id, timeout=N)` and format with `format_chimerax_response(result, context)`
 - Use `validate_atomspec(spec)` on user-provided atomspec params before passing to commands
+- Use `_model_spec(model_id)` for bare model-ID params (accepts `1` or `#1`; never build `f"#{model_id}"`)
+- Validate all arguments before the first `run_chimerax_command` call so a bad argument has no side effects
 - ChimeraX REST returns `json_values[0]` as a **JSON string** — always use `parse_info_json()` to parse
 - The `info models` command returns `{spec, class, attribute, present, value}` rows — one attribute per query
 - Error hints in `formatting.py` pattern-match ChimeraX errors and suggest the right tool to fix them
@@ -59,7 +63,10 @@ claude mcp add chimerax -- .venv/bin/python -m chimerax_mcp
 - Endpoint: `http://localhost:<port>/run?command=<url-encoded-command>`
 - JSON mode: `remotecontrol rest start port <N> json true log true`
 - Response: `{"json values": [...], "python values": [...], "log messages": {...}, "error": null}`
-- ChimeraX is auto-launched as a daemon if not running (double-fork on Unix)
+- The REST server is a single-threaded `HTTPServer`: requests (including health probes) queue behind any running command
+- `run_chimerax_command(port=None)` sends straight to the last known-good default port and only probes other ports if that fails; an explicit port never changes the default
+- Non-JSON / non-200 replies raise an error explaining `json true`; timeouts raise an error naming `CHIMERAX_TIMEOUT`
+- ChimeraX is auto-launched as a detached `subprocess.Popen` (new session, stdio → devnull, since our stdout is the MCP channel) if not running
 
 ## Testing
 

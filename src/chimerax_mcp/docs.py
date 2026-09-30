@@ -5,6 +5,7 @@ documentation from the installed HTML docs.
 """
 
 import os
+import re
 import shutil
 import sys
 from typing import Optional
@@ -279,6 +280,9 @@ def _candidate_installation_directories() -> list[str]:
         ])
         candidates.extend(sorted(_glob.glob('/opt/ChimeraX*'), reverse=True))
         candidates.extend(sorted(_glob.glob('/opt/UCSF/ChimeraX*'), reverse=True))
+        # Ubuntu/Debian and RPM packages install here (with /usr/bin/chimerax symlink)
+        candidates.extend(sorted(_glob.glob('/usr/lib/ucsf-chimerax*'), reverse=True))
+        candidates.extend(sorted(_glob.glob('/usr/lib64/ucsf-chimerax*'), reverse=True))
 
     deduped: list[str] = []
     for candidate in candidates:
@@ -287,23 +291,65 @@ def _candidate_installation_directories() -> list[str]:
     return deduped
 
 
+def _docs_path_candidates(install_dir: str) -> list[str]:
+    """Where the HTML docs live inside an installation, per platform."""
+    if sys.platform == 'darwin':
+        return [os.path.join(install_dir, 'Contents', 'share', 'docs')]
+    if sys.platform == 'win32':
+        return [
+            os.path.join(install_dir, 'bin', 'share', 'docs'),
+            os.path.join(install_dir, 'share', 'docs'),
+        ]
+    return [
+        os.path.join(install_dir, 'share', 'docs'),
+        os.path.join(install_dir, 'bin', 'share', 'docs'),
+    ]
+
+
+def _is_chimerax_installation(install_dir: str) -> bool:
+    """Return True if install_dir actually contains ChimeraX.
+
+    Guards against path heuristics that match any ``bin``/``lib`` directory
+    (e.g. /usr from /usr/bin/python3, or a virtualenv root).
+    """
+    if sys.platform == 'darwin':
+        executables = [os.path.join(install_dir, 'Contents', 'MacOS', 'ChimeraX')]
+    elif sys.platform == 'win32':
+        executables = [
+            os.path.join(install_dir, 'bin', 'ChimeraX.exe'),
+            os.path.join(install_dir, 'ChimeraX.exe'),
+        ]
+    else:
+        executables = [os.path.join(install_dir, 'bin', 'ChimeraX')]
+
+    if any(os.path.isfile(exe) for exe in executables):
+        return True
+    return any(
+        os.path.isdir(os.path.join(docs, 'user', 'commands'))
+        for docs in _docs_path_candidates(install_dir)
+    )
+
+
 def _find_chimerax_installation_directory() -> Optional[str]:
     """Find the ChimeraX installation directory using multiple strategies."""
-    import sys as _sys
-
-    search_paths = [os.path.realpath(_sys.executable), os.path.abspath(__file__)]
+    search_paths = []
+    override = os.environ.get("CHIMERAX_PATH")
+    if override:
+        search_paths.append(os.path.realpath(override))
     for exe_name in ("ChimeraX", "chimerax", "ChimeraX.exe"):
         resolved = shutil.which(exe_name)
         if resolved:
             search_paths.append(os.path.realpath(resolved))
+    # Only meaningful when running inside ChimeraX's own Python.
+    search_paths.extend([os.path.realpath(sys.executable), os.path.abspath(__file__)])
 
     for base_path in search_paths:
         install_dir = _installation_dir_from_path(base_path)
-        if install_dir:
+        if install_dir and _is_chimerax_installation(install_dir):
             return install_dir
 
     for candidate in _candidate_installation_directories():
-        if os.path.exists(candidate):
+        if os.path.exists(candidate) and _is_chimerax_installation(candidate):
             return candidate
 
     return None
@@ -315,22 +361,7 @@ def get_docs_path() -> Optional[str]:
     if install_dir is None:
         return None
 
-    candidate_paths = []
-    platform = sys.platform
-    if platform == 'darwin':
-        candidate_paths.append(os.path.join(install_dir, 'Contents', 'share', 'docs'))
-    elif platform == 'win32':
-        candidate_paths.extend([
-            os.path.join(install_dir, 'bin', 'share', 'docs'),
-            os.path.join(install_dir, 'share', 'docs'),
-        ])
-    else:
-        candidate_paths.extend([
-            os.path.join(install_dir, 'share', 'docs'),
-            os.path.join(install_dir, 'bin', 'share', 'docs'),
-        ])
-
-    for docs_path in candidate_paths:
+    for docs_path in _docs_path_candidates(install_dir):
         if os.path.isdir(docs_path):
             return docs_path
     return None
@@ -354,14 +385,35 @@ def list_available_commands() -> list:
     return sorted(commands)
 
 
+def _doc_page_name(command_name: str) -> Optional[str]:
+    """Map a command as typed to its doc page name, or None if not a command name.
+
+    Subcommands and negated forms share the parent page
+    ('surface dust' -> 'surface', '~select' -> 'select').
+    """
+    words = str(command_name).strip().split()
+    if not words:
+        return None
+    name = words[0].lstrip('~')
+    if not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]*', name):
+        return None
+    return name
+
+
 def get_command_doc(command_name: str) -> str:
     """Retrieve and convert ChimeraX command documentation to markdown."""
     docs_path = get_docs_path()
     if docs_path is None:
-        return f"Documentation not found: ChimeraX installation could not be located."
+        return "Documentation not found: ChimeraX installation could not be located."
 
-    cmd_file = os.path.join(docs_path, 'user', 'commands', f'{command_name}.html')
-    if not os.path.isfile(cmd_file):
+    page_name = _doc_page_name(command_name)
+    cmd_file = None
+    for candidate in dict.fromkeys([page_name, page_name.lower()] if page_name else []):
+        path = os.path.join(docs_path, 'user', 'commands', f'{candidate}.html')
+        if os.path.isfile(path):
+            cmd_file, command_name = path, candidate
+            break
+    if cmd_file is None:
         return f"Documentation not found for command: {command_name}"
 
     with open(cmd_file, 'r', encoding='utf-8', errors='replace') as f:

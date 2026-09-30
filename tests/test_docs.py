@@ -78,3 +78,77 @@ class TestGetCommandDoc:
                 assert "Open Command" in result
                 assert "Opens a file" in result
                 assert "# ChimeraX Command: open" in result
+
+
+class TestFindInstallationDirectory:
+    def test_ignores_non_chimerax_bin_directories(self, tmp_path):
+        """A python in <prefix>/bin must not make <prefix> look like ChimeraX (was: '/usr')."""
+        from chimerax_mcp import docs
+
+        fake_python = tmp_path / "bin" / "python3"
+        fake_python.parent.mkdir()
+        fake_python.touch()
+        with patch.dict(os.environ, {}, clear=False), \
+             patch("chimerax_mcp.docs.sys.executable", str(fake_python)), \
+             patch("chimerax_mcp.docs.shutil.which", return_value=None), \
+             patch("chimerax_mcp.docs._candidate_installation_directories", return_value=[]), \
+             patch("sys.platform", "linux"):
+            os.environ.pop("CHIMERAX_PATH", None)
+            assert docs._find_chimerax_installation_directory() is None
+
+    def test_uses_chimerax_path_override(self, tmp_path):
+        from chimerax_mcp import docs
+
+        exe = tmp_path / "chimerax-1.11" / "bin" / "ChimeraX"
+        exe.parent.mkdir(parents=True)
+        exe.touch()
+        with patch.dict(os.environ, {"CHIMERAX_PATH": str(exe)}), \
+             patch("chimerax_mcp.docs.shutil.which", return_value=None), \
+             patch("sys.platform", "linux"):
+            assert docs._find_chimerax_installation_directory() == str(tmp_path / "chimerax-1.11")
+
+    def test_accepts_candidate_with_docs(self, tmp_path):
+        from chimerax_mcp import docs
+
+        (tmp_path / "share" / "docs" / "user" / "commands").mkdir(parents=True)
+        with patch.dict(os.environ, {}, clear=False), \
+             patch("chimerax_mcp.docs.shutil.which", return_value=None), \
+             patch("chimerax_mcp.docs.sys.executable", "/nonexistent/python"), \
+             patch("chimerax_mcp.docs._candidate_installation_directories", return_value=[str(tmp_path)]), \
+             patch("sys.platform", "linux"):
+            os.environ.pop("CHIMERAX_PATH", None)
+            assert docs._find_chimerax_installation_directory() == str(tmp_path)
+
+
+class TestCommandDocNames:
+    def _docs_with(self, tmpdir, *names):
+        cmd_dir = os.path.join(tmpdir, "user", "commands")
+        os.makedirs(cmd_dir)
+        for name in names:
+            with open(os.path.join(cmd_dir, f"{name}.html"), "w") as f:
+                f.write(f"<html><body><h1>{name} docs</h1></body></html>")
+
+    def test_subcommand_uses_parent_page(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._docs_with(tmpdir, "surface")
+            with patch("chimerax_mcp.docs.get_docs_path", return_value=tmpdir):
+                result = get_command_doc("surface dust")
+                assert "# ChimeraX Command: surface" in result
+                assert "surface docs" in result
+
+    def test_negated_and_capitalized_forms(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._docs_with(tmpdir, "select")
+            with patch("chimerax_mcp.docs.get_docs_path", return_value=tmpdir):
+                assert "select docs" in get_command_doc("~select")
+                assert "select docs" in get_command_doc("Select")
+
+    def test_rejects_path_traversal(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self._docs_with(tmpdir, "open")
+            with open(os.path.join(tmpdir, "secret.html"), "w") as f:
+                f.write("<html><body>secret</body></html>")
+            with patch("chimerax_mcp.docs.get_docs_path", return_value=tmpdir):
+                result = get_command_doc("../../secret")
+                assert "not found" in result.lower()
+                assert "secret</" not in result

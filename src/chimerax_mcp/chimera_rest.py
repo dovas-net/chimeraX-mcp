@@ -136,10 +136,9 @@ def find_available_port(start_port: int = 8080) -> int:
     """Find the first available TCP port starting at start_port (up to +100)."""
     for port in range(start_port, start_port + 100):
         try:
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
-            sock.bind(('localhost', port))
-            sock.close()
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+                sock.bind(('localhost', port))
             return port
         except OSError:
             continue
@@ -230,7 +229,14 @@ async def list_running_instances() -> dict:
 # ---------------------------------------------------------------------------
 
 def start_chimerax_daemon(port: int) -> bool:
-    """Launch ChimeraX as a Unix double-fork daemon with REST enabled."""
+    """Launch ChimeraX detached from this process with REST enabled.
+
+    The child gets its own session/process group and /dev/null for stdio:
+    our stdout is the MCP JSON-RPC channel, so ChimeraX must never inherit it.
+    subprocess is used rather than a hand-rolled double fork because forking
+    the running asyncio process is unsafe, and a failed exec in a forked child
+    would otherwise return into a duplicate copy of this server.
+    """
     chimerax_path = find_chimerax_executable()
     if chimerax_path is None:
         return False
@@ -240,36 +246,25 @@ def start_chimerax_daemon(port: int) -> bool:
         "--cmd",
         f"remotecontrol rest start port {port} json true log true",
     ]
+    popen_kwargs: dict = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "close_fds": True,
+    }
+    if sys.platform == 'win32':
+        DETACHED_PROCESS = 0x00000008
+        CREATE_NEW_PROCESS_GROUP = 0x00000200
+        popen_kwargs["creationflags"] = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+    else:
+        popen_kwargs["start_new_session"] = True
 
     try:
-        # First fork
-        pid = os.fork()
-        if pid > 0:
-            # Parent: wait for first child to exit
-            os.waitpid(pid, 0)
-            return True
-
-        # First child
-        os.setsid()
-
-        # Second fork
-        pid2 = os.fork()
-        if pid2 > 0:
-            os._exit(0)
-
-        # Daemon (second child): redirect stdio to /dev/null
-        devnull_fd = os.open(os.devnull, os.O_RDWR)
-        os.dup2(devnull_fd, 0)
-        os.dup2(devnull_fd, 1)
-        os.dup2(devnull_fd, 2)
-        os.close(devnull_fd)
-
-        os.execv(chimerax_path, cmd_args)
-        # execv replaces the process; this line is never reached
-        os._exit(1)
-
-    except Exception:
+        subprocess.Popen(cmd_args, **popen_kwargs)
+    except OSError as exc:
+        logger.error("Failed to launch ChimeraX (%s): %s", chimerax_path, exc)
         return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -285,25 +280,24 @@ async def start_chimerax(
 
     Returns (success, actual_port).
     """
-    global _default_port
-
     if port is None:
         port = _default_port
 
-    # If not forcing a new instance and port is the default, check for existing
-    if not force_new and port == _default_port:
-        found, existing_port = await check_existing_rest_server()
-        if found:
-            _remember_instance(existing_port, auto_discovered=True)
-            return True, existing_port
+    # Reuse an existing instance unless the caller explicitly wants a new one.
+    # (With force_new, find_available_port below skips ports already bound by
+    # a running ChimeraX, so a genuinely new instance is launched.)
+    if not force_new:
+        if port == _default_port:
+            found, existing_port = await check_existing_rest_server()
+            if found:
+                _remember_instance(existing_port, auto_discovered=True)
+                return True, existing_port
 
-    # Already running on requested port?
-    if await is_chimerax_running(port):
-        _remember_instance(port)
-        return True, port
+        if await is_chimerax_running(port):
+            _remember_instance(port)
+            return True, port
 
-    chimerax_path = find_chimerax_executable()
-    if chimerax_path is None:
+    if find_chimerax_executable() is None:
         return False, port
 
     # Choose an available port if the requested one is in use
@@ -312,24 +306,8 @@ async def start_chimerax(
     except RuntimeError:
         actual_port = port
 
-    if sys.platform == 'win32':
-        # Windows: use subprocess with DETACHED_PROCESS
-        DETACHED_PROCESS = 0x00000008
-        CREATE_NEW_PROCESS_GROUP = 0x00000200
-        subprocess.Popen(
-            [
-                chimerax_path,
-                "--cmd",
-                f"remotecontrol rest start port {actual_port} json true log true",
-            ],
-            creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
-            close_fds=True,
-        )
-    else:
-        # Unix: double-fork daemon
-        success = start_chimerax_daemon(actual_port)
-        if not success:
-            return False, actual_port
+    if not start_chimerax_daemon(actual_port):
+        return False, actual_port
 
     # Register in instances
     _remember_instance(
@@ -361,23 +339,35 @@ async def start_chimerax(
 # 9. check_existing_rest_server
 # ---------------------------------------------------------------------------
 
+_COMMON_PORTS = (8081, 8082, 8083, 7955, 9000)
+
+
+def _candidate_ports() -> list[int]:
+    """Ports worth probing, most preferred first: default, known, common."""
+    return _unique_ports([
+        _default_port,
+        *list(_instances.keys()),
+        DEFAULT_CHIMERAX_PORT,
+        *_COMMON_PORTS,
+    ])
+
+
+async def _find_running_port(exclude: Optional[int] = None) -> Optional[int]:
+    """Return the most preferred reachable ChimeraX port, or None."""
+    candidates = [port for port in _candidate_ports() if port != exclude]
+    statuses = await _probe_running_ports(candidates)
+    for port in candidates:
+        if statuses.get(port):
+            return port
+    return None
+
+
 async def check_existing_rest_server() -> tuple[bool, int]:
     """Scan for an already-running ChimeraX REST server on common ports."""
-    common_ports = _unique_ports([
-        _default_port,
-        DEFAULT_CHIMERAX_PORT,
-        *list(_instances.keys()),
-        8081,
-        8082,
-        8083,
-        7955,
-        9000,
-    ])
-    statuses = await _probe_running_ports(common_ports)
-    for port in common_ports:
-        if statuses.get(port):
-            return True, port
-    return False, _default_port
+    port = await _find_running_port()
+    if port is None:
+        return False, _default_port
+    return True, port
 
 
 # ---------------------------------------------------------------------------
@@ -388,29 +378,30 @@ async def find_best_chimerax_instance() -> int:
     """Return the port of the best available ChimeraX instance.
 
     Checks the default port first, then known and common alternatives.
+    Falls back to the default port when nothing is reachable.
     """
-    candidate_ports = _unique_ports([
-        _default_port,
-        *list(_instances.keys()),
-        DEFAULT_CHIMERAX_PORT,
-        8081,
-        8082,
-        8083,
-        7955,
-        9000,
-    ])
-    statuses = await _probe_running_ports(candidate_ports)
-    for port in candidate_ports:
-        if statuses.get(port):
-            return port
-
-    # Fall back to default
-    return _default_port
+    port = await _find_running_port()
+    return _default_port if port is None else port
 
 
 # ---------------------------------------------------------------------------
 # 11. _execute_command_request
 # ---------------------------------------------------------------------------
+
+class _UnexpectedResponse(Exception):
+    """The port answered, but not like a ChimeraX REST server in JSON mode."""
+
+
+def _unexpected_response_message(port: int, detail: str) -> str:
+    return (
+        f"Port {port} answered, but not as a ChimeraX REST server in JSON mode "
+        f"({detail}).\n"
+        "→ If this is ChimeraX, restart its REST server in JSON mode by running in "
+        f"ChimeraX: remotecontrol rest stop; remotecontrol rest start port {port} json true\n"
+        "→ If another program owns this port, start ChimeraX on a different port "
+        "(start_new_chimerax_session) or set CHIMERAX_PORT"
+    )
+
 
 async def _execute_command_request(
     session: aiohttp.ClientSession,
@@ -424,7 +415,16 @@ async def _execute_command_request(
         kwargs['timeout'] = timeout
 
     async with session.get(url, params={'command': command}, **kwargs) as resp:
-        data = await resp.json()
+        if resp.status != 200:
+            raise _UnexpectedResponse(f"HTTP {resp.status}")
+        try:
+            # content_type=None: parse by content, not header, so a text/plain
+            # reply (REST started without `json true`) is reported clearly below.
+            data = await resp.json(content_type=None)
+        except ValueError:
+            data = None
+    if not isinstance(data, dict):
+        raise _UnexpectedResponse("response was not a JSON object")
 
     # Handle ChimeraX error response
     error = data.get('error')
@@ -458,42 +458,82 @@ async def run_chimerax_command(
         timeout: Command timeout in seconds (uses DEFAULT_TIMEOUT if None).
 
     Returns a dict with keys: return_values, json_values, logs.
+
+    When ``port`` is None the last known-good default port is tried directly;
+    other ports are only probed if that fails. (ChimeraX's REST server handles
+    one request at a time, so probing before every command would double the
+    request count and queue probes behind in-flight commands.) An explicit
+    ``port`` is used as-is and does not change the default.
     """
+    explicit_port = port is not None
     if port is None:
-        port = await find_best_chimerax_instance()
+        port = _default_port
 
     if timeout is None:
         timeout = DEFAULT_TIMEOUT
 
-    url = f"{get_chimerax_url(port)}/run"
     session = await get_session()
     aio_timeout = aiohttp.ClientTimeout(total=timeout)
 
-    logger.debug("Running command on port %d: %s (timeout=%ds)", port, command, timeout)
-
-    try:
-        result = await _execute_command_request(session, url, command, aio_timeout)
-        _remember_instance(port, promote=True)
+    async def run_on(target_port: int, promote: bool) -> dict:
+        url = f"{get_chimerax_url(target_port)}/run"
+        logger.debug(
+            "Running command on port %d: %s (timeout=%ds)", target_port, command, timeout
+        )
+        try:
+            result = await _execute_command_request(session, url, command, aio_timeout)
+        except asyncio.TimeoutError:
+            raise Exception(
+                f"ChimeraX on port {target_port} did not respond within {timeout}s "
+                f"to: {command[:200]}\n"
+                "→ The command may still be running inside ChimeraX; check its log "
+                "before retrying\n"
+                "→ Raise CHIMERAX_TIMEOUT for long-running commands"
+            ) from None
+        _remember_instance(target_port, promote=promote)
         logger.debug("Command completed: %s", command[:80])
         return result
+
+    try:
+        return await run_on(port, promote=not explicit_port)
     except aiohttp.ClientConnectorError:
-        logger.info("Cannot connect to port %d, attempting auto-launch", port)
-        chimerax_path = find_chimerax_executable()
-        if chimerax_path is None:
-            raise Exception(
-                f"Cannot connect to ChimeraX on port {port} and no ChimeraX "
-                "executable was found. Please start ChimeraX manually."
-            )
-        success, actual_port = await start_chimerax(port=port)
-        if not success:
-            raise Exception(
-                f"Cannot connect to ChimeraX on port {port} and failed to start "
-                "a new instance automatically."
-            )
-        logger.info("Auto-launched ChimeraX on port %d", actual_port)
-        _remember_instance(actual_port, promote=True)
-        url = f"{get_chimerax_url(actual_port)}/run"
-        return await _execute_command_request(session, url, command, aio_timeout)
+        failure: Optional[_UnexpectedResponse] = None
+    except _UnexpectedResponse as exc:
+        if explicit_port:
+            raise Exception(_unexpected_response_message(port, str(exc))) from None
+        failure = exc
+
+    if not explicit_port:
+        # The default port is gone (or isn't ChimeraX); look for another instance.
+        alternative = await _find_running_port(exclude=port)
+        if alternative is not None:
+            logger.info("Port %d unavailable, using ChimeraX on port %d", port, alternative)
+            try:
+                return await run_on(alternative, promote=True)
+            except _UnexpectedResponse as exc:
+                raise Exception(_unexpected_response_message(alternative, str(exc))) from None
+
+    if failure is not None:
+        raise Exception(_unexpected_response_message(port, str(failure)))
+
+    logger.info("Cannot connect to port %d, attempting auto-launch", port)
+    if find_chimerax_executable() is None:
+        raise Exception(
+            f"Cannot connect to ChimeraX on port {port} and no ChimeraX "
+            "executable was found. Please start ChimeraX manually, or set "
+            "CHIMERAX_PATH to the ChimeraX executable."
+        )
+    success, actual_port = await start_chimerax(port=port)
+    if not success:
+        raise Exception(
+            f"Cannot connect to ChimeraX on port {port} and failed to start "
+            "a new instance automatically."
+        )
+    logger.info("Auto-launched ChimeraX on port %d", actual_port)
+    try:
+        return await run_on(actual_port, promote=not explicit_port)
+    except _UnexpectedResponse as exc:
+        raise Exception(_unexpected_response_message(actual_port, str(exc))) from None
 
 
 # ---------------------------------------------------------------------------

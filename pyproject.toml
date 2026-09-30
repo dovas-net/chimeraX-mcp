@@ -13,7 +13,8 @@ authors = [
     {name = "ChimeraX MCP Contributors"}
 ]
 dependencies = [
-    "mcp[cli]>=1.0.0",
+    # FastMCP (mcp.server.fastmcp) arrived in 1.2 and was removed in 2.0.
+    "mcp[cli]>=1.2.0,<2",
     "aiohttp>=3.9.0",
     "beautifulsoup4>=4.12.0",
     "html2text>=2024.2.26",

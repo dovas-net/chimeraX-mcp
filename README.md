@@ -346,7 +346,7 @@ Replace `/path/to/chimeraX-mcp` with your actual install path. ChimeraX auto-lau
 | `set_scene` | Configure background color, lighting, silhouettes, camera mode |
 | `set_camera` | Control camera mode (mono, orthographic, stereo, 360) and FOV |
 | `set_lighting` | Control lighting environment and shadows |
-| `set_clipping` | Slice through structures with near/far/slab clipping planes |
+| `set_clipping` | Slice through structures with near/far/front/back clipping planes |
 | `zoom_view` | Zoom in/out by factor or exact pixel size |
 | `view_residue` | Center view and rotation on a specific residue |
 
@@ -451,7 +451,7 @@ Replace `/path/to/chimeraX-mcp` with your actual install path. ChimeraX auto-lau
 |------|-------------|
 | `rotate_view` | Rotate or rock the view around an axis |
 | `move_model` | Translate models or camera along an axis |
-| `record_movie` | Record, stop, and encode movies (H.264, VP8, GIF, APNG) |
+| `record_movie` | Record, stop, and encode movies (H.264, VP8, Theora, MOV, AVI, WMV, APNG) |
 
 ### Scene & Session Management (10)
 
@@ -473,7 +473,7 @@ Replace `/path/to/chimeraX-mcp` with your actual install path. ChimeraX auto-lau
 | Tool | Description |
 |------|-------------|
 | `set_material` | Control surface reflectivity and shininess |
-| `add_shape` | Add geometric shapes (sphere, cylinder, arrow) to the scene |
+| `add_shape` | Add geometric shapes (sphere, cylinder, cone, icosahedron) to the scene |
 
 ### Specialized (7)
 
@@ -485,7 +485,7 @@ Replace `/path/to/chimeraX-mcp` with your actual install path. ChimeraX auto-lau
 | `coordset` | Navigate NMR ensembles and MD trajectories |
 | `altlocs` | Show or change alternate conformations |
 | `set_attribute` | Set custom attributes on atoms/residues/models |
-| `show_crosslinks` | Visualize crosslinking mass spectrometry data |
+| `show_crosslinks` | Style crosslinking mass spectrometry pseudobonds (open the .pb file first) |
 
 ### Markers & 3D Printing (3)
 
@@ -509,7 +509,7 @@ Replace `/path/to/chimeraX-mcp` with your actual install path. ChimeraX auto-lau
 |------|-------------|
 | `residue_fit_density` | Per-residue density fit scores for model validation |
 | `show_mutation_scores` | Display mutation fitness/conservation scores |
-| `show_bumps` | Show/hide steric bump indicators |
+| `show_bumps` | Show/hide steric bump (clash) indicators |
 
 ### Homology & Prediction (2)
 

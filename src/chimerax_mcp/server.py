@@ -168,7 +168,7 @@ async def run_command(command: str, session_id: Optional[int] = None) -> str:
     EXPORT & SAVE:
       save ~/structure.pdb #1             -- export as PDB
       save ~/session.cxs                  -- save session
-      save ~/movie.mp4                    -- save spin movie
+      movie record; turn y 2 180; wait 180; movie encode ~/movie.mp4  -- spin movie
 
     SEQUENCE:
       sequence chain #1/A                 -- show sequence viewer for chain A
@@ -687,9 +687,9 @@ async def open_structure(
         session_id: ChimeraX session port (defaults to primary session)
     """
     if fetch_emdb_map:
-        valid_formats = ["auto-detect", "pdb", "cif", "mmcif"]
+        valid_formats = ["auto-detect", "cif", "mmcif"]
         if format not in valid_formats:
-            return f"Error: fetch_emdb_map=True only works with PDB or mmCIF formats. Specified format '{format}' is not compatible."
+            return f"Error: fetch_emdb_map=True only works with mmCIF (the default for PDB IDs). Specified format '{format}' is not compatible."
 
     open_target = quote_chimerax_arg(identifier) if _looks_like_local_path(identifier) else identifier
     command = f"open {open_target}" if format == "auto-detect" else f"open {open_target} format {format}"
@@ -902,9 +902,12 @@ async def align_structures(match_model: str, ref_model: str, chain_pairing: str 
     Args:
         match_model: Model to move (e.g., '#2')
         ref_model: Reference model to align to (e.g., '#1')
-        chain_pairing: 'bb' (best-best chain pairing) or 'sc' (specific chain)
+        chain_pairing: 'bb' (best chain pair, default), 'bs' (best reference chain for each
+            specified match chain), or 'ss' (pair the specified chains; give one chain in each spec)
         session_id: ChimeraX session port (defaults to primary session)
     """
+    if chain_pairing not in ("bb", "bs", "ss"):
+        raise ValueError(f"chain_pairing must be 'bb', 'bs', or 'ss', got '{chain_pairing}'")
     command = f"matchmaker {match_model} to {ref_model} pairing {chain_pairing}"
     result = await run_chimerax_command(command, session_id)
     context = f"Structural alignment: {match_model} aligned to {ref_model}"
@@ -1235,12 +1238,15 @@ async def add_hydrogens(target: str = "all", session_id: Optional[int] = None) -
 async def minimize_structure(target: str = "all", steps: int = 100, session_id: Optional[int] = None) -> str:
     """Run energy minimization on a structure.
 
+    All specified atoms must belong to a single structure, so with more than one
+    model open pass a model spec (e.g. '#1') rather than 'all'.
+
     Args:
         target: Atomspec to minimize (default: 'all')
-        steps: Number of minimization steps (default: 100)
+        steps: Maximum number of minimization steps (default: 100)
         session_id: ChimeraX session port (defaults to primary session)
     """
-    command = f"minimize {target} steps {steps}"
+    command = f"minimize {target} maxSteps {steps}"
     result = await run_chimerax_command(command, session_id, timeout=300)
     return format_chimerax_response(result, f"Minimized {target} ({steps} steps)")
 
@@ -1353,7 +1359,8 @@ async def select_zone(
     if target_type not in ("atoms", "residues"):
         raise ValueError(f"target_type must be 'atoms' or 'residues', got '{target_type}'")
 
-    command = f"select zone {origin} {distance} {target_type} true"
+    residues = "true" if target_type == "residues" else "false"
+    command = f"select zone {origin} {distance} residues {residues}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Selected {target_type} within {distance}A of {origin}")
 
@@ -1370,6 +1377,7 @@ async def label_atoms(
     height: float = 1.0,
     color: str = "",
     delete: bool = False,
+    level: str = "",
     session_id: Optional[int] = None,
 ) -> str:
     """Add or remove text labels on atoms or residues.
@@ -1377,17 +1385,25 @@ async def label_atoms(
     Args:
         atomspec: What to label (e.g., '#1/A:100', 'ligand')
         text: Label text (if empty, uses default atom/residue name)
-        attribute: Show an attribute instead of text (e.g., 'residue_name', 'bfactor')
+        attribute: Show an attribute instead of text. Residue-level attributes: 'name',
+            'number'; atom-level attributes (need level='atoms'): 'bfactor', 'occupancy', 'name'
         height: Label height in Angstroms (default: 1.0)
         color: Label color (e.g., 'white', 'black')
         delete: If True, remove labels instead of adding them
+        level: 'atoms', 'residues', 'bonds', 'pseudobonds', or 'models'.
+            Empty = ChimeraX default (residues when atoms are specified)
         session_id: ChimeraX session port (defaults to primary session)
     """
     atomspec = validate_atomspec(atomspec)
+    if level and level not in ("atoms", "residues", "bonds", "pseudobonds", "models"):
+        raise ValueError(f"level must be 'atoms', 'residues', 'bonds', 'pseudobonds', or 'models', got '{level}'")
+    if text and attribute:
+        raise ValueError("Specify either text or attribute, not both")
+    level_part = f" {level}" if level else ""
     if delete:
-        command = f"label delete {atomspec}"
+        command = f"label delete {atomspec}{level_part}"
     else:
-        command = f"label {atomspec}"
+        command = f"label {atomspec}{level_part}"
         if text:
             command += f" text {quote_chimerax_arg(text)}"
         if attribute:
@@ -1592,7 +1608,8 @@ async def undo_redo(
     if count < 1:
         raise ValueError(f"Count must be >= 1, got {count}")
 
-    command = f"{action} {count}" if count > 1 else action
+    # `undo`/`redo` take no count argument; chain the command instead.
+    command = "; ".join([action] * count)
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"{action.capitalize()} ({count} step{'s' if count > 1 else ''})")
 
@@ -1674,18 +1691,22 @@ async def set_clipping(
 ) -> str:
     """Control view clipping planes to slice through structures.
 
+    For a slab, enable both planes: near with a negative offset and far with a
+    positive one (e.g. near -5, then far 5). run_command('clip off') removes all planes.
+
     Args:
-        plane: Which plane - 'near', 'far', 'front', 'back', 'slab'
-        offset: Distance offset in Angstroms (positive = further from camera)
+        plane: Which plane - 'near', 'far', 'front', 'back'
+        offset: Offset in Angstroms from the center of rotation (or from the plane's
+            current position if already on); positive = further from camera
         enable: Enable (True) or disable (False) the clipping plane
         session_id: ChimeraX session port (defaults to primary session)
     """
+    if plane not in ("near", "far", "front", "back"):
+        raise ValueError(f"plane must be 'near', 'far', 'front', or 'back', got '{plane}'")
     if not enable:
-        command = f"clip off {plane}"
-    elif offset != 0:
-        command = f"clip {plane} {offset}"
+        command = f"clip {plane} off"
     else:
-        command = f"clip {plane}"
+        command = f"clip {plane} {offset}"
     result = await run_chimerax_command(command, session_id)
     action = "Disabled" if not enable else "Set"
     return format_chimerax_response(result, f"{action} {plane} clipping plane")
@@ -1787,19 +1808,18 @@ async def atoms_to_map(
 @mcp.tool()
 async def show_contacts(
     target: str = "all",
-    both: bool = True,
     session_id: Optional[int] = None,
 ) -> str:
     """Find and display protein-protein or molecular interfaces.
 
+    Shows a network diagram of contacting chains with buried areas. To select the
+    interface residues, use run_command('interfaces select #1/A contacting #1/B bothSides true').
+
     Args:
         target: Atomspec for the model(s) to analyze (e.g., '#1')
-        both: Show contacts from both sides of the interface (default: True)
         session_id: ChimeraX session port (defaults to primary session)
     """
     command = f"interfaces {target}"
-    if both:
-        command += " bothSides true"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Interfaces for {target}")
 
@@ -1849,8 +1869,10 @@ async def rotate_view(
 
     Args:
         axis: Rotation axis - 'x', 'y', 'z' (default: 'y')
-        angle: Rotation angle in degrees (default: 90)
-        frames: Number of animation frames (0 = instant)
+        angle: Total rotation angle in degrees (default: 90). With rock=True, the
+            full back-and-forth swing.
+        frames: Number of animation frames over which to spread the rotation (0 = instant).
+            With rock=True, total rocking duration (0 = rock until run_command('stop')).
         rock: If True, rock back and forth instead of one-way turn
         session_id: ChimeraX session port (defaults to primary session)
     """
@@ -1858,10 +1880,11 @@ async def rotate_view(
         command = f"rock {axis} {angle}"
         if frames > 0:
             command += f" {frames}"
+    elif frames > 0:
+        # `turn` rotates by `angle` on *every* frame, so split the total.
+        command = f"turn {axis} {round(angle / frames, 6)} {frames}"
     else:
         command = f"turn {axis} {angle}"
-        if frames > 0:
-            command += f" {frames}"
     result = await run_chimerax_command(command, session_id)
     action = "Rocking" if rock else "Rotated"
     return format_chimerax_response(result, f"{action} view {angle} degrees around {axis}")
@@ -1888,12 +1911,14 @@ async def zoom_view(
     """
     if pixel_size > 0:
         command = f"zoom pixelSize {pixel_size}"
+        context = f"Set pixel size to {pixel_size}A"
     else:
         command = f"zoom {factor}"
+        context = f"Zoomed by factor {factor}"
     if frames > 0:
-        command += f" {frames}"
+        command += f" frames {frames}"
     result = await run_chimerax_command(command, session_id)
-    return format_chimerax_response(result, f"Zoomed by factor {factor}")
+    return format_chimerax_response(result, context)
 
 
 # ---------------------------------------------------------------------------
@@ -1916,16 +1941,23 @@ async def record_movie(
         action: 'record' (start recording), 'stop' (stop recording), 'encode' (save movie)
         filename: Output filename (for encode action, e.g., 'movie.mp4')
         framerate: Frames per second for encoding (default: 25)
-        format: Video format for encoding - 'h264', 'vp8', 'apng', 'gif' (default: 'h264')
+        format: Video format for encoding - 'h264' (.mp4), 'vp8' (.webm), 'theora' (.ogv),
+            'mov', 'avi', 'wmv', 'apng' (animated .png) (default: 'h264')
         session_id: ChimeraX session port (defaults to primary session)
     """
+    movie_suffixes = {
+        "h264": ".mp4", "vp8": ".webm", "theora": ".ogv", "mov": ".mov",
+        "avi": ".avi", "wmv": ".wmv", "apng": ".png",
+    }
     if action == "record":
         command = "movie record"
     elif action == "stop":
         command = "movie stop"
     elif action == "encode":
+        if format not in movie_suffixes:
+            raise ValueError(f"format must be one of {', '.join(movie_suffixes)}, got '{format}'")
         if not filename:
-            filename = _default_output_path("chimerax_movie", ".mp4")
+            filename = _default_output_path("chimerax_movie", movie_suffixes[format])
         command = (
             f"movie encode {quote_chimerax_arg(filename)} framerate {framerate} "
             f"format {format}"
@@ -1977,14 +2009,14 @@ async def apply_preset(
     """Apply a built-in visualization preset.
 
     Args:
-        preset_name: Preset name. Common presets:
-            'initial styles' - default representation
-            'publication 1 (silhouettes)' - publication with edge outlines
-            'publication 2 (depth-cued)' - publication with depth fog
-            'interactive 1 (ribbons)' - interactive ribbon view
-            'interactive 2 (sticks)' - interactive stick view
-            'sticks', 'cylinders', 'licorice', 'ball-and-stick', 'space-filling'
-            Note: use full names to avoid ambiguity (e.g., 'publication 1' not 'publication')
+        preset_name: Preset name (unambiguous abbreviations work). Built-in presets:
+            Initial styles: 'original look', 'sticks', 'cartoon',
+                'space-filling (chain colors)', 'space-filling (single color)'
+            Overall look: 'publication 1 (silhouettes)', 'publication 2 (depth-cued)', 'interactive'
+            Cartoons/nucleotides: 'ribbons/slabs', 'cylinders/stubs', 'licorice/ovals'
+            Molecular surfaces: 'ghostly white', 'atomic coloring (transparent)',
+                'chain ID coloring (opaque)'
+            Note: 'space-filling' alone is ambiguous; use the full name
         session_id: ChimeraX session port (defaults to primary session)
     """
     command = f"preset {quote_chimerax_arg(preset_name)}"
@@ -2066,17 +2098,20 @@ async def add_shape(
     color: str = "gray",
     session_id: Optional[int] = None,
 ) -> str:
-    """Add a geometric shape (sphere, cylinder, arrow) to the scene.
+    """Add a geometric shape (sphere, cylinder, cone, icosahedron) to the scene.
+
+    For other shapes (rectangle, tube along atoms, ribbon, ...) use
+    run_command('shape ...'); see get_command_documentation('shape').
 
     Args:
-        shape_type: Shape - 'sphere', 'cylinder', 'arrow', 'tube', 'rectangle'
+        shape_type: Shape - 'sphere', 'cylinder', 'cone', 'icosahedron'
         center: Center position as 'x,y,z' (default: '0,0,0')
         radius: Shape radius in Angstroms (default: 5.0)
         color: Shape color (default: 'gray')
         session_id: ChimeraX session port (defaults to primary session)
     """
-    if shape_type not in ("sphere", "cylinder", "arrow", "tube", "rectangle"):
-        raise ValueError(f"Shape must be 'sphere', 'cylinder', 'arrow', 'tube', or 'rectangle'")
+    if shape_type not in ("sphere", "cylinder", "cone", "icosahedron"):
+        raise ValueError(f"Shape must be 'sphere', 'cylinder', 'cone', or 'icosahedron', got '{shape_type}'")
     command = f"shape {shape_type} center {center} radius {radius} color {color}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Added {shape_type} at {center}")
@@ -2183,17 +2218,18 @@ async def split_model(
 
     Args:
         model: Model spec to split (e.g., '#1')
-        by: How to split - 'chains', 'ligands', 'connected', 'atoms'
+        by: How to split - 'chains', 'ligands', 'connected'. To split into explicit
+            atom groups, use run_command('split #1 atoms :1-100 atoms :101-200').
         session_id: ChimeraX session port (defaults to primary session)
     """
     model = validate_atomspec(model)
     command = f"split {model}"
     if by == "chains":
         pass  # default behavior
-    elif by in ("ligands", "connected", "atoms"):
+    elif by in ("ligands", "connected"):
         command += f" {by}"
     else:
-        raise ValueError(f"'by' must be 'chains', 'ligands', 'connected', or 'atoms'")
+        raise ValueError(f"'by' must be 'chains', 'ligands', or 'connected', got '{by}'")
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Split {model} by {by}")
 
@@ -2261,22 +2297,26 @@ async def set_attribute(
 
 @mcp.tool()
 async def show_crosslinks(
-    filename: str,
+    pseudobonds: str,
     color: str = "dodgerblue",
     radius: float = 0.5,
     session_id: Optional[int] = None,
 ) -> str:
-    """Visualize crosslinking mass spectrometry data.
+    """Style crosslinking mass spectrometry data (pseudobonds) as crosslinks.
+
+    Load the crosslinks first as a pseudobond file (e.g. open_structure('xl.pb')),
+    then pass the resulting pseudobond model spec shown by list_models().
 
     Args:
-        filename: Path to crosslinks file (CSV or pseudobond format)
+        pseudobonds: Pseudobond spec for the crosslinks (e.g., '#2' for an opened .pb file)
         color: Crosslink color (default: 'dodgerblue')
         radius: Pseudobond radius (default: 0.5)
         session_id: ChimeraX session port (defaults to primary session)
     """
-    command = f"crosslinks {quote_chimerax_arg(filename)} color {color} radius {radius}"
+    pseudobonds = validate_atomspec(pseudobonds)
+    command = f"crosslinks {pseudobonds} color {color} radius {radius}"
     result = await run_chimerax_command(command, session_id)
-    return format_chimerax_response(result, f"Crosslinks loaded from {filename}")
+    return format_chimerax_response(result, f"Crosslinks styled: {pseudobonds}")
 
 
 # ---------------------------------------------------------------------------
@@ -2310,26 +2350,60 @@ async def show_crystal_contacts(
 async def build_structure(
     structure_type: str,
     value: str,
+    model_name: str = "",
+    secondary_structure: str = "helix",
     session_id: Optional[int] = None,
 ) -> str:
-    """Build atoms, fragments, or peptides from scratch.
+    """Build a single atom, a peptide, or a nucleic acid from scratch as a new model.
 
     Args:
         structure_type: What to build - 'atom' (single atom), 'peptide' (from sequence),
                        'nucleic' (from sequence)
-        value: For 'atom': element symbol. For 'peptide'/'nucleic': sequence string.
+        value: For 'atom': element symbol (e.g., 'C', 'Fe'). For 'peptide': one-letter
+            amino-acid sequence. For 'nucleic': DNA or RNA sequence (RNA if it contains U).
+        model_name: Name for the new model (default: the structure type)
+        secondary_structure: For 'peptide' only - 'helix' (phi,psi = -57,-47) or
+            'strand' (phi,psi = -139,135)
         session_id: ChimeraX session port (defaults to primary session)
     """
+    import re as _re
+
+    if structure_type not in ("atom", "peptide", "nucleic"):
+        raise ValueError(f"type must be 'atom', 'peptide', or 'nucleic', got '{structure_type}'")
+    name = model_name.strip() or {"atom": "atom", "peptide": "peptide", "nucleic": "nucleic_acid"}[structure_type]
+    if not _re.fullmatch(r"[A-Za-z0-9_.-]+", name):
+        raise ValueError("model_name may only contain letters, digits, '_', '.', and '-'")
+
     if structure_type == "atom":
-        command = f"build start atom {value}"
-    elif structure_type == "peptide":
-        command = f"build start peptide {value}"
-    elif structure_type == "nucleic":
-        command = f"build start nucleic {value}"
+        element = value.strip().capitalize()
+        if not _re.fullmatch(r"[A-Z][a-z]?", element):
+            raise ValueError(f"Invalid element symbol: '{value}'")
+        # `build start atom` always places a helium atom and selects it;
+        # change it to the requested element (no added hydrogens), then deselect.
+        result = await run_chimerax_command(f"build start atom {name}", session_id)
+        try:
+            await run_chimerax_command(f"build modify sel {element} 0", session_id)
+        finally:
+            await run_chimerax_command("~select", session_id)
+        return format_chimerax_response(result, f"Built {element} atom in new model '{name}'")
+
+    sequence = "".join(value.split()).upper()
+    if structure_type == "peptide":
+        if not sequence.isalpha():
+            raise ValueError("Peptide sequence must contain only one-letter amino-acid codes")
+        phi_psi = {"helix": "-57,-47", "strand": "-139,135"}.get(secondary_structure)
+        if phi_psi is None:
+            raise ValueError(f"secondary_structure must be 'helix' or 'strand', got '{secondary_structure}'")
+        # One phi,psi pair is reused for every residue.
+        command = f"build start peptide {name} {sequence} {phi_psi}"
     else:
-        raise ValueError(f"type must be 'atom', 'peptide', or 'nucleic'")
+        if not sequence or set(sequence) - set("ACGTU"):
+            raise ValueError("Nucleic acid sequence must contain only A, C, G, T, U")
+        command = f"build start nucleic {name} {sequence}"
+        if "U" in sequence:
+            command += " type rna"
     result = await run_chimerax_command(command, session_id)
-    return format_chimerax_response(result, f"Built {structure_type}: {value[:30]}")
+    return format_chimerax_response(result, f"Built {structure_type} '{name}': {sequence[:30]}")
 
 
 # ---------------------------------------------------------------------------
@@ -2347,7 +2421,8 @@ async def show_symmetry(
 
     Args:
         model: Model spec (e.g., '#1')
-        sym_type: Symmetry type - 'assembly' (biological unit), 'unitcell', 'contacts'
+        sym_type: Symmetry type - 'assembly' (biological unit), 'unitcell',
+            'contacts' (crystal packing contacts; see also show_crystal_contacts)
         assembly_id: Assembly ID for biological units (default: '1')
         session_id: ChimeraX session port (defaults to primary session)
     """
@@ -2357,7 +2432,7 @@ async def show_symmetry(
     elif sym_type == "unitcell":
         command = f"unitcell {model}"
     elif sym_type == "contacts":
-        command = f"sym {model} contacts true"
+        command = f"crystalcontacts {model}"
     else:
         raise ValueError(f"sym_type must be 'assembly', 'unitcell', or 'contacts'")
     result = await run_chimerax_command(command, session_id)
@@ -2700,16 +2775,18 @@ async def move_model(
 
     Args:
         axis: Translation axis - 'x', 'y', 'z'
-        distance: Distance in Angstroms
+        distance: Total distance in Angstroms
         models: Models to move (empty = move camera)
         frames: Animate over N frames (0 = instant)
         session_id: ChimeraX session port (defaults to primary session)
     """
-    command = f"move {axis} {distance}"
+    if frames > 0:
+        # `move` shifts by `distance` on *every* frame, so split the total.
+        command = f"move {axis} {round(distance / frames, 6)} {frames}"
+    else:
+        command = f"move {axis} {distance}"
     if models:
         command += f" models {models}"
-    if frames > 0:
-        command += f" {frames}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Moved {axis} by {distance}A")
 
@@ -2729,14 +2806,19 @@ async def color_key(
 
     Args:
         palette: Color palette to show (e.g., 'rainbow', 'red-white-blue')
-        label_side: Label position - 'left', 'right', 'top', 'bottom'
+        label_side: Label position - 'left'/'top' (same setting: left of a vertical key,
+            above a horizontal one) or 'right'/'bottom'
         show: Show (True) or delete (False) the color key
         session_id: ChimeraX session port (defaults to primary session)
     """
+    sides = {"left": "left/top", "top": "left/top", "right": "right/bottom", "bottom": "right/bottom"}
+    side = sides.get(label_side, label_side)
+    if side not in ("left/top", "right/bottom"):
+        raise ValueError(f"label_side must be 'left', 'right', 'top', or 'bottom', got '{label_side}'")
     if not show:
         command = "key delete"
     else:
-        command = f"key {palette} labelSide {label_side}"
+        command = f"key {palette} labelSide {side}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, "Color key " + ("removed" if not show else "added"))
 
@@ -2754,7 +2836,7 @@ async def foldseek_search(
     """Search for structurally similar proteins using Foldseek.
 
     Args:
-        target: Atomspec for the query structure (e.g., '#1')
+        target: Exactly one query chain (e.g., '#1/A')
         database: Database to search - 'pdb100', 'afdb50', 'afdb-swissprot', 'afdb-proteome'
         session_id: ChimeraX session port (defaults to primary session)
     """
@@ -2783,7 +2865,7 @@ async def altlocs(
     """
     target = validate_atomspec(target)
     if altloc:
-        command = f"altlocs change {target} {altloc}"
+        command = f"altlocs change {altloc} {target}"
     else:
         command = f"altlocs list {target}"
     result = await run_chimerax_command(command, session_id)
@@ -2865,9 +2947,9 @@ async def set_material(
     if reflectivity > 0:
         parts.append(f"reflectivity {reflectivity}")
     if specular_exponent > 0:
-        parts.append(f"specularExponent {specular_exponent}")
+        parts.append(f"exponent {specular_exponent}")
     if transparency_cast_shadows:
-        parts.append("transparencyCastShadows true")
+        parts.append("transparentCastShadows true")
     if len(parts) == 1:
         return "No material properties specified."
     command = " ".join(parts)
@@ -2909,14 +2991,16 @@ async def similar_structures(
     target: str,
     session_id: Optional[int] = None,
 ) -> str:
-    """Find structurally similar entries in PDB using the Similar Structures tool.
+    """Find similar entries in the PDB by BLAST sequence search (Similar Structures tool).
+
+    For a structure-based search use foldseek_search.
 
     Args:
-        target: Atomspec for the query chain (e.g., '#1/A')
+        target: Exactly one query chain (e.g., '#1/A')
         session_id: ChimeraX session port (defaults to primary session)
     """
     target = validate_atomspec(target)
-    command = f"similarstructures {target}"
+    command = f"similarstructures blast {target}"
     result = await run_chimerax_command(command, session_id, timeout=120)
     return format_chimerax_response(result, f"Similar structures for {target}")
 
@@ -3002,10 +3086,13 @@ async def show_aniso(
         session_id: ChimeraX session port (defaults to primary session)
     """
     if not show:
-        command = f"~aniso {target}"
+        result = await run_chimerax_command(f"~aniso {target}", session_id)
     else:
-        command = f"aniso {target} scale {scale}"
-    result = await run_chimerax_command(command, session_id)
+        result = await run_chimerax_command(f"aniso {target}", session_id)
+        if scale != 1.0:
+            style_result = await run_chimerax_command(f"aniso style {target} scale {scale}", session_id)
+            for level, messages in style_result.get("logs", {}).items():
+                result.setdefault("logs", {}).setdefault(level, []).extend(messages)
     return format_chimerax_response(result, f"Thermal ellipsoids {'hidden' if not show else 'shown'} for {target}")
 
 
@@ -3039,7 +3126,11 @@ async def show_bumps(
     show: bool = True,
     session_id: Optional[int] = None,
 ) -> str:
-    """Show or hide steric bump indicators between close atoms.
+    """Show or hide steric bump (clash) indicators between close atoms.
+
+    Shortcut for ChimeraX `clashes` with default settings (see find_clashes for options);
+    hiding removes all clash pseudobonds. Note ChimeraX's own `bumps` command is unrelated:
+    it marks protrusions on density-map surfaces.
 
     Args:
         target: Atomspec to check (e.g., '#1')
@@ -3047,9 +3138,9 @@ async def show_bumps(
         session_id: ChimeraX session port (defaults to primary session)
     """
     if not show:
-        command = f"~bumps {target}"
+        command = "~clashes"
     else:
-        command = f"bumps {target}"
+        command = f"clashes {target}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Bumps {'hidden' if not show else 'shown'} for {target}")
 
@@ -3244,16 +3335,18 @@ async def manage_log(
     """Control the ChimeraX log panel.
 
     Args:
-        action: 'show', 'hide', 'clear', 'save', 'errors' (show only errors)
-        filename: File path for 'save' action
+        action: 'show', 'hide', 'clear', 'save'
+        filename: File path for 'save' action (HTML)
         session_id: ChimeraX session port (defaults to primary session)
     """
-    if action == "save" and filename:
+    if action == "save":
+        if not filename:
+            raise ValueError("filename is required for action 'save'")
         command = f"log save {quote_chimerax_arg(filename)}"
-    elif action in ("show", "hide", "clear", "errors"):
+    elif action in ("show", "hide", "clear"):
         command = f"log {action}"
     else:
-        raise ValueError(f"Action must be 'show', 'hide', 'clear', 'save', or 'errors'")
+        raise ValueError(f"Action must be 'show', 'hide', 'clear', or 'save', got '{action}'")
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Log {action}")
 
@@ -3273,7 +3366,9 @@ async def run_modeller(
     Requires Modeller license key configured in ChimeraX.
 
     Args:
-        target: Atomspec or sequence alignment reference
+        target: Sequence spec in an open alignment, not an atomspec - e.g. 'myseqs.fasta:1'
+            for comparative; loops also take a region, e.g. 'myseqs.fasta:1:internal'.
+            See get_command_documentation('modeller').
         action: 'comparative' (homology modeling) or 'loops' (loop refinement)
         session_id: ChimeraX session port (defaults to primary session)
     """
@@ -3304,7 +3399,7 @@ async def play_map_series(
     model = validate_atomspec(model)
     if action not in ("play", "stop", "slider"):
         raise ValueError(f"Action must be 'play', 'stop', or 'slider'")
-    command = f"mseries {model} {action}"
+    command = f"vseries {action} {model}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Map series {action}: {model}")
 
@@ -3318,14 +3413,18 @@ async def show_mutation_scores(
     target: str,
     session_id: Optional[int] = None,
 ) -> str:
-    """Display mutation fitness/conservation scores on a structure.
+    """Associate loaded mutation fitness/conservation scores with a structure.
+
+    The scores must already be open (e.g. a deep mutational scan CSV opened with
+    run_command('open scores.csv format dms')); afterwards use run_command('mutationscores ...')
+    subcommands such as 'heatmap', 'histogram', or 'color' to display them.
 
     Args:
-        target: Atomspec for the model (e.g., '#1')
+        target: Chain(s) to associate with the scores (e.g., '#1/A')
         session_id: ChimeraX session port (defaults to primary session)
     """
     target = validate_atomspec(target)
-    command = f"mutationscores {target}"
+    command = f"mutationscores structure {target}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Mutation scores for {target}")
 
@@ -3364,7 +3463,7 @@ async def manage_pseudobonds(
         if color:
             results.append(await run_chimerax_command(f"color {target} {color}", session_id))
         if radius > 0:
-            results.append(await run_chimerax_command(f"size {target} stickRadius {radius}", session_id))
+            results.append(await run_chimerax_command(f"size {target} pseudobondRadius {radius}", session_id))
         if dashes > 0:
             results.append(await run_chimerax_command(f"style {target} dashes {dashes}", session_id))
     all_logs: dict = {}
@@ -3393,7 +3492,7 @@ async def residue_fit_density(
         session_id: ChimeraX session port (defaults to primary session)
     """
     model, map_model = validate_atomspec(model), validate_atomspec(map_model)
-    command = f"resfit {model} inMap {map_model}"
+    command = f"resfit {model} map {map_model}"
     result = await run_chimerax_command(command, session_id)
     return format_chimerax_response(result, f"Residue fit scores: {model} in {map_model}")
 
@@ -3415,7 +3514,7 @@ async def build_rna(
     Args:
         pairs: Base-pairing info as comma-separated triples (e.g., '1,50,10,60,70,2')
                Each triple is: start1, start2, stem_length
-        sequence: Amino acid sequence string or path to FASTA file (for atomic model)
+        sequence: RNA nucleotide sequence string or path to FASTA file (for atomic model)
         length: Total number of nucleotides (0 = auto from pairs)
         pattern: Layout pattern - 'circle', 'helix', 'line', 'sphere'
         session_id: ChimeraX session port (defaults to primary session)

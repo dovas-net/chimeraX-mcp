@@ -497,7 +497,7 @@ class TestUndoRedo:
         mock_result = make_result()
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             result = await undo_redo("redo", count=3)
-            assert "redo 3" == mock.call_args[0][0]
+            assert "redo; redo; redo" == mock.call_args[0][0]  # redo takes no count
             assert "3 steps" in result
 
     @pytest.mark.asyncio
@@ -592,7 +592,7 @@ class TestSetClipping:
         mock_result = make_result()
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             await set_clipping("near", enable=False)
-            assert "clip off near" == mock.call_args[0][0]
+            assert "clip near off" == mock.call_args[0][0]
 
 
 class TestCalculateRmsd:
@@ -889,8 +889,8 @@ class TestShowCrosslinks:
         from chimerax_mcp.server import show_crosslinks
         mock_result = make_result()
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
-            await show_crosslinks("xl_data.csv")
-            assert 'crosslinks "xl_data.csv"' in mock.call_args[0][0]
+            await show_crosslinks("#2")
+            assert "crosslinks #2 color dodgerblue radius 0.5" == mock.call_args[0][0]
 
 
 class TestShowCrystalContacts:
@@ -910,7 +910,7 @@ class TestBuildStructure:
         mock_result = make_result()
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             await build_structure("peptide", "ACGT")
-            assert "build start peptide ACGT" == mock.call_args[0][0]
+            assert "build start peptide peptide ACGT -57,-47" == mock.call_args[0][0]
 
     @pytest.mark.asyncio
     async def test_invalid_type(self):
@@ -1128,7 +1128,7 @@ class TestAltlocs:
         mock_result = make_result()
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             await altlocs("#1/A:100", "B")
-            assert "altlocs change #1/A:100 B" == mock.call_args[0][0]
+            assert "altlocs change B #1/A:100" == mock.call_args[0][0]
 
 
 class TestCoordset:
@@ -1168,7 +1168,7 @@ class TestSetMaterial:
             await set_material(reflectivity=0.8, specular_exponent=30)
             cmd = mock.call_args[0][0]
             assert "reflectivity 0.8" in cmd
-            assert "specularExponent 30" in cmd
+            assert "exponent 30" in cmd and "specularExponent" not in cmd
 
     @pytest.mark.asyncio
     async def test_no_params(self):
@@ -1202,7 +1202,7 @@ class TestSimilarStructures:
         mock_result = make_result()
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             await similar_structures("#1/A")
-            assert "similarstructures #1/A" == mock.call_args[0][0]
+            assert "similarstructures blast #1/A" == mock.call_args[0][0]
 
 
 class TestStruts:
@@ -1253,7 +1253,7 @@ class TestShowAniso:
         mock_result = make_result()
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             await show_aniso("#1", scale=1.5)
-            assert "aniso #1 scale 1.5" == mock.call_args[0][0]
+            assert [c[0][0] for c in mock.call_args_list] == ["aniso #1", "aniso style #1 scale 1.5"]
 
     @pytest.mark.asyncio
     async def test_hides(self):
@@ -1281,7 +1281,7 @@ class TestShowBumps:
         mock_result = make_result()
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             await show_bumps("#1")
-            assert "bumps #1" == mock.call_args[0][0]
+            assert "clashes #1" == mock.call_args[0][0]
 
     @pytest.mark.asyncio
     async def test_hides(self):
@@ -1289,7 +1289,7 @@ class TestShowBumps:
         mock_result = make_result()
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             await show_bumps("#1", show=False)
-            assert "~bumps #1" == mock.call_args[0][0]
+            assert "~clashes" == mock.call_args[0][0]
 
 
 class TestCheckChirality:
@@ -1408,7 +1408,7 @@ class TestPlayMapSeries:
         mock_result = make_result()
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             await play_map_series("#2", "play")
-            assert "mseries #2 play" == mock.call_args[0][0]
+            assert "vseries play #2" == mock.call_args[0][0]
 
 
 class TestShowMutationScores:
@@ -1418,7 +1418,7 @@ class TestShowMutationScores:
         mock_result = make_result()
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             await show_mutation_scores("#1")
-            assert "mutationscores #1" == mock.call_args[0][0]
+            assert "mutationscores structure #1" == mock.call_args[0][0]
 
 
 class TestManagePseudobonds:
@@ -1433,7 +1433,7 @@ class TestManagePseudobonds:
         with patch("chimerax_mcp.server.run_chimerax_command", side_effect=mock_run):
             await manage_pseudobonds("#1.3", color="cyan", radius=0.3)
             assert any("color #1.3 cyan" in c for c in calls)
-            assert any("size #1.3 stickRadius 0.3" in c for c in calls)
+            assert any("size #1.3 pseudobondRadius 0.3" in c for c in calls)
 
     @pytest.mark.asyncio
     async def test_hides(self):
@@ -1451,7 +1451,7 @@ class TestResidueFitDensity:
         mock_result = make_result()
         with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock, return_value=mock_result) as mock:
             await residue_fit_density("#1", "#2")
-            assert "resfit #1 inMap #2" == mock.call_args[0][0]
+            assert "resfit #1 map #2" == mock.call_args[0][0]
 
 
 class TestBuildRna:
@@ -1846,3 +1846,100 @@ class TestDefaultOutputPaths:
         cmd = mock.call_args[0][0]
         assert os.path.join(tempfile.gettempdir(), "chimerax_movie_") in cmd
         assert cmd.split('"')[1].endswith(".mp4")
+
+
+# ===================================================================
+# Command syntax regression tests (verified against ChimeraX CmdDesc
+# registrations / user-guide usage lines)
+# ===================================================================
+
+_EXACT_COMMANDS = [
+    # clip: planes take a value or "off"; `clip off` has no plane argument
+    ("set_clipping", ("near",), {}, "clip near 0.0"),
+    ("set_clipping", ("far", 5.0), {}, "clip far 5.0"),
+    ("set_clipping", ("back",), {"enable": False}, "clip back off"),
+    # zoom/move/turn: positional args may not follow keywords; turn/move apply per frame
+    ("zoom_view", (), {"pixel_size": 0.5, "frames": 10}, "zoom pixelSize 0.5 frames 10"),
+    ("zoom_view", (2.0,), {"frames": 10}, "zoom 2.0 frames 10"),
+    ("rotate_view", ("y", 90.0), {"frames": 10}, "turn y 9.0 10"),
+    ("rotate_view", ("y", 90.0), {}, "turn y 90.0"),
+    ("rotate_view", ("x", 30.0), {"rock": True, "frames": 136}, "rock x 30.0 136"),
+    ("move_model", ("x", 20.0), {"models": "#1", "frames": 10}, "move x 2.0 10 models #1"),
+    # keyword names
+    ("minimize_structure", ("#1",), {"steps": 200}, "minimize #1 maxSteps 200"),
+    ("select_zone", ("#1:ATP", 5.0), {"target_type": "atoms"}, "select zone #1:ATP 5.0 residues false"),
+    ("select_zone", ("#1:ATP", 5.0), {}, "select zone #1:ATP 5.0 residues true"),
+    ("show_contacts", ("#1",), {}, "interfaces #1"),
+    ("show_symmetry", ("#1", "contacts"), {}, "crystalcontacts #1"),
+    ("color_key", ("rainbow", "top"), {}, "key rainbow labelSide left/top"),
+    ("color_key", ("rainbow", "right"), {}, "key rainbow labelSide right/bottom"),
+    ("set_material", (), {"transparency_cast_shadows": True}, "material transparentCastShadows true"),
+    ("play_map_series", ("#2", "slider"), {}, "vseries slider #2"),
+    ("play_map_series", ("#2", "stop"), {}, "vseries stop #2"),
+    ("label_atoms", ("#1",), {"attribute": "bfactor", "level": "atoms"}, "label #1 atoms attribute bfactor height 1.0"),
+    ("add_shape", ("cone", "1,2,3", 2.0, "red"), {}, "shape cone center 1,2,3 radius 2.0 color red"),
+    ("build_structure", ("nucleic", "acgu"), {}, "build start nucleic nucleic_acid ACGU type rna"),
+    ("build_structure", ("peptide", "AAAA"), {"model_name": "pep", "secondary_structure": "strand"},
+     "build start peptide pep AAAA -139,135"),
+]
+
+
+class TestCommandSyntax:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool,args,kwargs,expected", _EXACT_COMMANDS)
+    async def test_generates_valid_command(self, tool, args, kwargs, expected):
+        import chimerax_mcp.server as server
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock,
+                   return_value=make_result()) as mock:
+            await getattr(server, tool)(*args, **kwargs)
+        assert mock.call_args_list[0][0][0] == expected
+
+    @pytest.mark.asyncio
+    async def test_build_atom_replaces_placeholder_helium(self):
+        from chimerax_mcp.server import build_structure
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock,
+                   return_value=make_result()) as mock:
+            await build_structure("atom", "fe")
+        assert [c[0][0] for c in mock.call_args_list] == [
+            "build start atom atom", "build modify sel Fe 0", "~select",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_record_movie_suffix_follows_format(self):
+        from chimerax_mcp.server import record_movie
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock,
+                   return_value=make_result()) as mock:
+            await record_movie("encode", format="vp8")
+        cmd = mock.call_args[0][0]
+        assert cmd.split('"')[1].endswith(".webm") and "format vp8" in cmd
+
+    @pytest.mark.asyncio
+    async def test_open_pdb_format_with_emdb_map_rejected(self):
+        from chimerax_mcp.server import open_structure
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock) as mock:
+            result = await open_structure("7bv2", format="pdb", fetch_emdb_map=True)
+        assert "mmCIF" in result
+        mock.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("tool,args,kwargs,match", [
+        ("set_clipping", ("slab",), {}, "plane"),
+        ("align_structures", ("#2", "#1", "sc"), {}, "chain_pairing"),
+        ("add_shape", ("arrow",), {}, "Shape"),
+        ("split_model", ("#1", "atoms"), {}, "'by'"),
+        ("manage_log", ("errors",), {}, "Action"),
+        ("manage_log", ("save",), {}, "filename"),
+        ("color_key", ("rainbow", "middle"), {}, "label_side"),
+        ("record_movie", ("encode",), {"format": "gif"}, "format"),
+        ("label_atoms", ("#1",), {"text": "x", "attribute": "bfactor"}, "either text or attribute"),
+        ("build_structure", ("atom", "C1"), {}, "element"),
+        ("build_structure", ("peptide", "AC"), {"secondary_structure": "coil"}, "secondary_structure"),
+        ("build_structure", ("nucleic", "ACGX"), {}, "Nucleic"),
+        ("build_structure", ("peptide", "AC"), {"model_name": "my model"}, "model_name"),
+    ])
+    async def test_invalid_arguments_rejected_before_running(self, tool, args, kwargs, match):
+        import chimerax_mcp.server as server
+        with patch("chimerax_mcp.server.run_chimerax_command", new_callable=AsyncMock) as mock:
+            with pytest.raises(ValueError, match=match):
+                await getattr(server, tool)(*args, **kwargs)
+        mock.assert_not_called()

@@ -1,3 +1,0 @@
-[console_scripts]
-chimerax-mcp = chimerax_mcp.cli:main
-chimerax-mcp-core = chimerax_mcp.core_server:main

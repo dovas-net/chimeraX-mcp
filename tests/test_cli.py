@@ -198,3 +198,50 @@ class TestCLIVersionFlag:
         captured = capsys.readouterr()
         assert __version__ in captured.out
         assert exit_code == 0
+
+
+class TestContinueYamlUpsert:
+    def _setup(self, tmp_path, text):
+        path = tmp_path / "config.yaml"
+        path.write_text(text, encoding="utf-8")
+        setup_client_config("continue", path=str(path), python_path="/usr/bin/python3")
+        return path.read_text(encoding="utf-8")
+
+    def test_entry_goes_into_mcp_servers_not_last_key(self, tmp_path):
+        result = self._setup(
+            tmp_path,
+            "name: assistant\n"
+            "mcpServers:\n"
+            "  - name: other\n"
+            "    command: foo\n"
+            "\n"
+            "models:\n"
+            "  - name: gpt\n",
+        )
+        assert result.index("- name: chimerax") < result.index("models:")
+        assert result.endswith("models:\n  - name: gpt\n")
+        assert "  - name: chimerax\n    command: /usr/bin/python3\n    args:\n      - -m\n" in result
+
+    def test_matches_unindented_list_style(self, tmp_path):
+        result = self._setup(
+            tmp_path,
+            "mcpServers:\n"
+            "- name: other\n"
+            "  command: foo\n"
+            "models: []\n",
+        )
+        assert "\n- name: chimerax\n  command: /usr/bin/python3\n  args:\n    - -m\n" in result
+        assert result.index("- name: chimerax") < result.index("models: []")
+
+    def test_adds_block_when_key_missing(self, tmp_path):
+        result = self._setup(tmp_path, "models: []\n")
+        assert result.startswith("models: []\n\nmcpServers:\n  - name: chimerax\n")
+
+    def test_inline_mcp_servers_is_refused(self, tmp_path):
+        import pytest
+        with pytest.raises(ValueError, match="print-config continue"):
+            self._setup(tmp_path, "mcpServers: []\n")
+
+    def test_existing_entry_left_alone(self, tmp_path):
+        original = "mcpServers:\n  - name: chimerax\n    command: old\n"
+        assert self._setup(tmp_path, original) == original

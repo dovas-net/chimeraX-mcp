@@ -338,19 +338,48 @@ def _upsert_continue_yaml(path: Path, command: str, args: list[str]) -> None:
     if f"name: {SERVER_NAME}" in text:
         return
 
-    entry = (
-        f"  - name: {SERVER_NAME}\n"
-        f"    command: {command}\n"
-        "    args:\n"
-        + "\n".join(f"      - {arg}" for arg in args)
-        + "\n"
+    lines = text.splitlines(keepends=True)
+    key_index = next(
+        (i for i, line in enumerate(lines) if re.match(r"^mcpServers:\s*(#.*)?$", line.rstrip("\r\n"))),
+        None,
     )
+    if key_index is None:
+        if re.search(r"(?m)^mcpServers:", text):
+            # e.g. an inline `mcpServers: []` we cannot safely extend
+            raise ValueError(
+                f"Could not update {path}: its mcpServers entry is not a block list. "
+                "Add the snippet from `chimerax-mcp print-config continue` manually."
+            )
+        _atomic_write(path, text.rstrip() + "\n\n" + block)
+        return
 
-    if "mcpServers:" in text:
-        updated = text.rstrip() + "\n" + entry
-    else:
-        updated = text.rstrip() + "\n\n" + block
-    _atomic_write(path, updated)
+    # The block runs until the next non-blank line at column 0 (other than a
+    # column-0 "- " list item, which YAML allows directly under a key).
+    end = key_index + 1
+    while end < len(lines) and (
+        not lines[end].strip() or lines[end][0] in " \t" or lines[end].startswith("- ")
+    ):
+        end += 1
+    while end > key_index + 1 and not lines[end - 1].strip():
+        end -= 1
+
+    item_indent = "  "
+    for line in lines[key_index + 1:end]:
+        match = re.match(r"^(\s*)- ", line)
+        if match:
+            item_indent = match.group(1)
+            break
+
+    entry = (
+        f"{item_indent}- name: {SERVER_NAME}\n"
+        f"{item_indent}  command: {command}\n"
+        f"{item_indent}  args:\n"
+        + "".join(f"{item_indent}    - {arg}\n" for arg in args)
+    )
+    before = "".join(lines[:end])
+    if before and not before.endswith("\n"):
+        before += "\n"
+    _atomic_write(path, before + entry + "".join(lines[end:]))
 
 
 def setup_client_config(
